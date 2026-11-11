@@ -75,7 +75,12 @@ public final class Keeper extends Service {
         thread.start();
         worker = new Handler(thread.getLooper());
         worker.post(poll);
-        worker.postDelayed(this::firstStart, 2500);
+        worker.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                firstStart();
+            }
+        }, 2500);
     }
 
     @Override

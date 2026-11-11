@@ -1,0 +1,685 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  /* drawn at 960x540 and scaled up by the browser */
+  canvas { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; display: block; }
+  #c { will-change: transform; transition: filter 0.3s; }
+  /* the grade: a soft theme-colored veil that also takes the edge off the colors */
+  #dim { position: fixed; left: 0; top: 0; right: 0; bottom: 0; transition: opacity 1s; }
+  /* no group opacity here: it would force the whole scene through an offscreen pass every frame */
+  #scene { position: fixed; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; display: none; }
+  #sway { transform-origin: 50% 100%; animation: sway 7s ease-in-out infinite alternate; }
+  @keyframes sway { from { transform: rotate(-0.7deg); } to { transform: rotate(0.7deg); } }
+  .trail { position: fixed; left: 0; top: auto; width: 200vw; height: 3vh; will-change: transform; }
+  #tA { bottom: 4.5vh; animation: slide 6s linear infinite; }
+  #tB { bottom: 8vh; animation: slide 9s linear infinite reverse; }
+  #wx { height: 200vh; animation: fall 14s linear infinite; will-change: transform; }
+  @keyframes fall { from { transform: translateY(-50%); } to { transform: translateY(0); } }
+  @keyframes slide { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+</style>
+</head>
+<body>
+<canvas id="c" width="800" height="450"></canvas>
+<canvas id="cosmos" width="960" height="540" style="display:none"></canvas>
+<div id="dim"></div>
+<div id="gain" style="position:fixed;left:0;top:0;right:0;bottom:0;background:#000;opacity:0;pointer-events:none"></div>
+<div id="scene">
+  <canvas id="back" width="960" height="540"></canvas>
+  <canvas id="sway" width="960" height="540"></canvas>
+  <canvas id="tA" class="trail" width="1920" height="40"></canvas>
+  <canvas id="tB" class="trail" width="1920" height="40"></canvas>
+  <canvas id="wx" width="480" height="540" style="display:none"></canvas>
+</div>
+<script src="butterchurn.min.js"></script>
+<script src="scenes.js"></script>
+<script>
+(function () {
+  var A = window.Android;
+  function say(s) { try { A.status(s); } catch (e) {} }
+  var canvas = document.getElementById('c'), dimEl = document.getElementById('dim');
+  var viz = null, running = false, raf = 0, last = 0, acc = 0, n = 0;
+  var wave = new Uint8Array(1024);
+  wave.fill(128);
+  var levels = { timeByteArray: wave, timeByteArrayL: wave, timeByteArrayR: wave };
+
+  function init() {
+    try {
+      var B = window.butterchurn.default || window.butterchurn;
+      // no AudioContext: the TV's own Visualizer feeds the waveform through feed()
+      viz = B.createVisualizer(null, canvas, {
+        width: 800, height: 450, mesh_width: 32, mesh_height: 24, pixelRatio: 1, textureRatio: 1
+      });
+      // add the beat envelope to the levels the presets read (the running averages are untouched)
+      var AL = viz.renderer.audioLevels, upd = AL.updateAudioLevels;
+      var sv = [1, 1, 1], sa = [1, 1, 1], dev = [0.3, 0.3, 0.3];
+      AL.updateAudioLevels = function (fps, frame) {
+        upd.call(this, fps, frame);
+        // the waveform changes 20 times a second: smooth the levels between updates, then add the pulse
+        var k = 1 - Math.exp(-lastDt / 60), kd = 1 - Math.exp(-lastDt / 3000);
+        for (var i = 0; i < 3; i++) {
+          sv[i] += (this.val[i] - sv[i]) * k; sa[i] += (this.att[i] - sa[i]) * k;
+          // per-band auto-gain: how far a band swings around 1 is scaled to a steady size, so a flat
+          // song moves the presets about as much as a punchy one
+          dev[i] += (Math.abs(sv[i] - 1) - dev[i]) * kd;
+          bandGain[i] = Math.max(1, Math.min(2.6, 0.5 / (dev[i] + 0.05)));
+          this.val[i] = Math.max(0, 1 + (sv[i] - 1) * bandGain[i]);
+          this.att[i] = Math.max(0, 1 + (sa[i] - 1) * bandGain[i]);
+        }
+        lvl0 = this.val[0]; lvl1 = this.val[1];
+        this.val[0] += 0.8 * kickK; this.att[0] += 0.5 * kickK;
+        this.val[1] += 0.6 * snareK; this.att[1] += 0.35 * snareK;
+      };
+      return true;
+    } catch (e) {
+      say('error:' + e);
+      return false;
+    }
+  }
+
+  // A kick (0) or snare (1) heard by the TV side. The waveform only changes 20 times a second, so
+  // two frames in three see old data; this envelope is recomputed every frame instead. It is added
+  // to butterchurn's bass/mid (every preset reacts) and drives a small punch on top.
+  var snareT = 0, snareS = 0, kickK = 0, snareK = 0, punch = 0;
+  // The beat clock from the TV side: tempo, confidence, beat period and the epoch time of a beat.
+  // While it is sure of itself (conf >= 0.35) the pulses come from its predicted beats, so a missed
+  // kick does not drop a beat; below that each detected kick pulses on its own.
+  var clk = { bpm: 0, conf: 0, on: false, period: 0, nextDue: 0, s: 0.8 }, lastDue = 0, pulseT = -1e9, pulseA = 0,
+      lastPulseT = -1e9, beatsN = 0, speed = 1, lastDt = 16.7,
+      pulseE = 0, curId = '', prevL = null, sc = { n: 0, se: 0, sd: 0, see: 0, sdd: 0, sed: 0, done: false },
+      bandGain = [1, 1, 1], lvl0 = 1, lvl1 = 1, energyS = 0, runMax = 0.05, energyN = 0,
+      driftAt = 0, dHue = 0, dBr = 1, gHue = 0, gSat = 0.5, gBr = 0.8;
+  function firePulse(s, t) {
+    // never two pulses inside half a beat (or 150 ms), or the second would stack on the first
+    if (t - lastPulseT < Math.max(150, 0.5 * (clk.period || 300))) return;
+    lastPulseT = pulseT = t; pulseA = s; beatsN++;
+  }
+  window.clock = function (bpm, conf, period, anchor, s) {
+    clk.bpm = bpm; clk.conf = conf; clk.period = period; clk.s = s;
+    // on above 0.5, off only below 0.35, so a hovering estimate does not flip the pulses between clock and kicks
+    clk.on = conf > 0.5 || (clk.on && conf >= 0.35);
+    // the next beat on the grid that is at least half a beat after the last one fired
+    clk.nextDue = lastDue ? anchor + Math.ceil((lastDue + 0.5 * period - anchor) / period) * period : anchor;
+  };
+  window.beat = function (kind, s) {
+    var t = performance.now();
+    if (kind === 0) { if (!clk.on) firePulse(s, t); } else { snareT = t; snareS = s; }
+    if (dbg) st.beats++;
+  };
+  function envelope(t) {
+    if (clk.on && clk.period > 0) {
+      var nowE = Date.now();
+      if (clk.nextDue < nowE - 2 * clk.period) clk.nextDue += Math.ceil((nowE - clk.nextDue) / clk.period) * clk.period;
+      if (clk.nextDue <= nowE) { firePulse(clk.s, t); lastDue = clk.nextDue; clk.nextDue += clk.period; }
+    }
+    // attack 80 ms, release 400 ms, smoothed; its size is set by the comfort level
+    var pd = t - pulseT, e = pd < 0 ? 0 : pd < 80 ? pd / 80 : pd < 480 ? 1 - (pd - 80) / 400 : 0;
+    pulseE = e;
+    kickK = pulseA * C.pulse * e * e * (3 - 2 * e);
+    snareK = snareS * Math.exp(-(t - snareT) / 110);
+    if (kickK < 0.01) kickK = 0;
+    if (snareK < 0.01) snareK = 0;
+    // The transform pulse, locked to the beat clock: up to +4% scale and a small turn (alternating
+    // each beat) on every kick; kickK already carries the comfort level, so `high` stops near +2%.
+    // Sixteen steps keep the style writes down.
+    var step = Math.round(kickK * 16);
+    if (step !== punch) {
+      punch = step;
+      canvas.style.transform = step ? 'scale(' + (1 + 0.04 * step / 16).toFixed(4) + ') rotate(' +
+        ((beatsN & 1 ? 1 : -1) * 0.6 * step / 16).toFixed(3) + 'deg)' : '';
+    }
+    // Hue drifts with the mid band and brightness lifts with the bass, five times a second at most;
+    // the luminance limiter and flash budget below still govern the result.
+    if (t - driftAt > 200) {
+      driftAt = t;
+      var dh = Math.round(14 * C.pulse * Math.max(-1, Math.min(1, lvl1 - 1)) / 2) * 2;
+      var nb = 1 + Math.round(10 * C.pulse * Math.max(0, Math.min(1, lvl0 - 1))) / 100;
+      if (dh !== dHue || nb !== dBr) { dHue = dh; dBr = nb; applyFilter(); }
+    }
+  }
+  function applyFilter() {
+    canvas.style.filter = 'hue-rotate(' + (gHue + dHue) + 'deg) saturate(' + gSat.toFixed(2) + ') brightness(' + (gBr * dBr).toFixed(2) + ')';
+    curBr = gBr * dBr;
+  }
+
+  // due = epoch ms this audio should be on screen (capture time plus react_sync_ms)
+  window.feed = function (b64, due) {
+    var s = atob(b64), m = Math.min(1024, s.length);
+    for (var i = 0; i < m; i++) wave[i] = s.charCodeAt(i);
+    feedSeq++;
+    // loudness against the loudest recent moment (a ~25 s memory): 0 in silence, 1 at the loud parts
+    var q = 0, j;
+    for (j = 0; j < m; j += 4) { var dv = wave[j] - 128; q += dv * dv; }
+    var rms = Math.sqrt(q / (m / 4)) / 128;
+    energyS += (rms - energyS) * (rms > energyS ? 0.4 : 0.08);
+    runMax = Math.max(runMax * 0.998, energyS);
+    energyN = energyS < 0.004 ? 0 : Math.min(1, energyS / Math.max(runMax, 0.02));
+    if (dbg) {
+      var lag = due ? Date.now() - due : 0, peak = 0;
+      for (var k = 0; k < m; k++) peak = Math.max(peak, Math.abs(wave[k] - 128));
+      st.feeds++;
+      st.lag += lag;
+      st.lagMax = Math.max(st.lagMax, lag);
+      st.peak = Math.max(st.peak, peak);
+    }
+  };
+
+  // react_debug=on: one "dumbtvsync web ..." line a second through the bridge
+  var dbg = false, feedSeq = 0, seenSeq = 0, st = null, statAt = 0;
+  function resetStats() {
+    st = { beats: 0, feeds: 0, frames: 0, stale: 0, lag: 0, lagMax: 0, peak: 0,
+           b: 0, m: 0, t: 0, ba: 0, bMax: 0, mMax: 0, tMax: 0, baMax: 0, bSpikes: 0, pb: 1 };
+  }
+  window.setDebug = function (on) { dbg = !!on; resetStats(); statAt = 0; };
+  function stats(t) {
+    var L = viz.renderer.audioLevels;
+    st.frames++;
+    if (seenSeq === feedSeq) st.stale++;
+    seenSeq = feedSeq;
+    st.b += L.bass; st.m += L.mid; st.t += L.treb; st.ba += L.bass_att;
+    st.bMax = Math.max(st.bMax, L.bass); st.mMax = Math.max(st.mMax, L.mid);
+    st.tMax = Math.max(st.tMax, L.treb); st.baMax = Math.max(st.baMax, L.bass_att);
+    if (L.bass > 1.3 && st.pb <= 1.3) st.bSpikes++;
+    st.pb = L.bass;
+    if (!statAt) statAt = t;
+    if (t - statAt >= 1000) {
+      var nf = st.frames, q = st.feeds || 1;
+      function r(x) { return Math.round(x * 100) / 100; }
+      var secs = (t - statAt) / 1000;
+      try {
+        A.sync('clock bpm=' + r(clk.bpm) + ' conf=' + r(clk.conf) + ' pulses=' + beatsN + ' bars=' + Math.floor(beatsN / 4) +
+          ' speed=' + r(speed) + ' beats=' + r(st.beats / secs) + '/s feeds=' + r(st.feeds / secs) + '/s frames=' + r(nf / secs) +
+          '/s staleFrames=' + st.stale + ' arrivalLag(avg/max)=' + r(st.lag / q) + '/' + st.lagMax +
+          'ms wavePeak=' + st.peak + '/127 bass=' + r(st.b / nf) + '(max ' + r(st.bMax) + ') mid=' +
+          r(st.m / nf) + '(max ' + r(st.mMax) + ') treb=' + r(st.t / nf) + '(max ' + r(st.tMax) +
+          ') bass_att=' + r(st.ba / nf) + '(max ' + r(st.baMax) + ') bassPeaks>1.3=' + st.bSpikes);
+      } catch (e) {}
+      resetStats();
+      statAt = t;
+    }
+  }
+
+  // The TV side picks the preset (seeded per song, nothing repeats for 40 picks) and sends its JSON.
+
+  // The picture is rendered at a fixed 800x450 (the browser scales it up): switching the size at
+  // run time leaks ~60 MB of GPU textures per switch, which on this TV ends in swapping.
+
+  // Weather (snow, rain) is only worth its cost while the picture holds 45 fps; the choice is made
+  // again for every preset, because cutting it is what gives the frames back.
+  var wxKind = '', wxCut = false, presetT = 0;
+  function applyWx() { wxEl.style.display = wxKind && !wxCut ? '' : 'none'; }
+
+  window.loadB64 = function (b64, blend, name) {
+    if (!viz) return;
+    wxCut = false; applyWx(); presetT = performance.now();
+    curId = name; prevL = null; sc = { n: 0, se: 0, sd: 0, see: 0, sdd: 0, sed: 0, done: false };
+    try {
+      viz.loadPreset(JSON.parse(decodeURIComponent(escape(atob(b64)))), blend);
+      say('preset:' + name);
+    } catch (e) {
+      say('badpreset:' + name);
+      say('error-detail:' + e);
+    }
+  };
+
+  // ---- identity: a color grade over the picture plus a procedural silhouette scene -------------
+  var W = 960, H = 540;
+  var theme = '', tseed = 1, mood = 0.5, pal = null;
+  var SCENE = document.getElementById('scene');
+  var gBack = document.getElementById('back').getContext('2d');
+  var gSway = document.getElementById('sway').getContext('2d');
+  var gA = document.getElementById('tA').getContext('2d'), gB = document.getElementById('tB').getContext('2d');
+
+  function rng(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function mix(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]; }
+  function rgba(c, a) { return 'rgba(' + Math.round(c[0]) + ',' + Math.round(c[1]) + ',' + Math.round(c[2]) + ',' + a + ')'; }
+  function hsl(h, s, l) {
+    var a = s * Math.min(l, 1 - l);
+    function f(n) { var k = (n + h / 30) % 12; return 255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))); }
+    return [f(0), f(8), f(4)];
+  }
+
+  // c1 = sky, c2 = ground, a = veil strength, l = silhouette layers (name[:arg])
+  var T = {
+    la:        { c1: [255, 126, 64],  c2: [168, 60, 160],  a: 0.30, l: ['sun', 'skyline:la', 'palms', 'trails'] },
+    miami:     { c1: [255, 110, 170], c2: [40, 200, 200],  a: 0.30, l: ['sun', 'palms', 'skyline:none'] },
+    nyc:       { c1: [255, 190, 70],  c2: [40, 70, 140],   a: 0.28, l: ['skyline:empire'] },
+    london:    { c1: [150, 165, 190], c2: [50, 60, 90],    a: 0.28, l: ['skyline:bigben'] },
+    paris:     { c1: [255, 200, 150], c2: [110, 80, 150],  a: 0.28, l: ['skyline:eiffel'] },
+    berlin:    { c1: [120, 170, 190], c2: [30, 40, 60],    a: 0.28, l: ['skyline:tv'] },
+    tokyo:     { c1: [255, 90, 190],  c2: [60, 40, 160],   a: 0.30, l: ['skyline:tokyo', 'trails'] },
+    seoul:     { c1: [120, 200, 255], c2: [200, 90, 200],  a: 0.28, l: ['skyline:tokyo'] },
+    lagos:     { c1: [255, 190, 60],  c2: [20, 120, 70],   a: 0.30, l: ['sun', 'skyline:none', 'trails'] },
+    jamaica:   { c1: [255, 200, 50],  c2: [20, 140, 60],   a: 0.32, l: ['sun', 'palms'] },
+    ethiopia:  { c1: [240, 170, 60],  c2: [120, 60, 30],   a: 0.32, l: ['sun', 'ridges:3'] },
+    rio:       { c1: [255, 130, 150], c2: [30, 160, 160],  a: 0.30, l: ['sun', 'ridges:2', 'palms'] },
+    mumbai:    { c1: [255, 150, 40],  c2: [170, 40, 90],   a: 0.30, l: ['skyline:domes'] },
+    cairo:     { c1: [240, 200, 120], c2: [150, 90, 50],   a: 0.30, l: ['sun', 'dunes', 'skyline:domes'] },
+    nashville: { c1: [240, 170, 90],  c2: [90, 60, 50],    a: 0.28, l: ['sun', 'hills'] },
+    nairobi:   { c1: [250, 170, 70],  c2: [110, 60, 40],   a: 0.30, l: ['sun', 'acacia'] },
+    nightcity: { c1: [90, 100, 200],  c2: [20, 20, 50],    a: 0.28, l: ['skyline:none', 'trails'] },
+    grid:      { c1: [170, 60, 240],  c2: [20, 200, 230],  a: 0.26, l: ['grid'] },
+    dusk:      { c1: [230, 110, 90],  c2: [50, 40, 90],    a: 0.28, l: ['hills'] },
+    bluenight: { c1: [60, 90, 180],   c2: [15, 25, 60],    a: 0.28, l: ['skyline:none'] },
+    mist:      { c1: [170, 190, 200], c2: [70, 90, 110],   a: 0.26, l: ['ridges:3'] }
+  };
+
+  // The grade: saturation capped at 0.55 and brightness at 0.85, cooler when the song is slow or
+  // dark, a little warmer when it is fast and bright. Re-run on every mood change.
+  function grade() {
+    var t = T[theme], r = rng(tseed ^ 0x9e37), c1, c2, a;
+    if (t) { c1 = t.c1; c2 = t.c2; a = t.a; }
+    else { var h = r() * 360; c1 = hsl(h, 0.55, 0.55); c2 = hsl((h + 50) % 360, 0.5, 0.3); a = 0.28; }
+    var cool = Math.max(0, 0.4 - mood) / 0.4, warm = Math.max(0, mood - 0.65) / 0.35;
+    c1 = mix(mix(c1, [70, 110, 200], cool * 0.45), [255, 150, 60], warm * 0.2);
+    c2 = mix(mix(c2, [20, 40, 110], cool * 0.45), [200, 70, 40], warm * 0.2);
+    // cover colors pull the veil toward the artwork (more when there is no place theme)
+    if (pal) { var k = t ? 0.4 : 0.65; c1 = mix(c1, pal[0], k); c2 = mix(c2, pal[pal.length > 1 ? 1 : 0], k); }
+    // slightly warm: the veil leans toward amber, more at higher comfort levels
+    if (C.warm) { c1 = mix(c1, WARM, C.warm); c2 = mix(c2, WARM, C.warm); }
+    var sat = Math.min(C.sat, 0.30 + 0.25 * mood), br = Math.min(C.br, 0.70 + 0.15 * mood);
+    gHue = (tseed >> 3) % 50 - 25; gSat = sat; gBr = br;
+    applyFilter();
+    dimEl.style.background = 'linear-gradient(to bottom,' + rgba(c1, a) + ',' + rgba(c2, a + 0.06) + ')';
+  }
+
+  // SA: how faint the whole scene is (a hint behind the music), baked into every alpha
+  var SA = 0.5;
+  function ink(t, alpha) { var c = mix(t ? t.c2 : [30, 30, 50], [0, 0, 0], 0.72); return rgba(c, alpha * SA); }
+
+  function skyline(g, r, color, kind) {
+    var x = 0;
+    g.fillStyle = color;
+    while (x < W) {
+      var w = 22 + r() * 40, h = 40 + r() * 120;
+      g.fillRect(x, H - h, w, h);
+      if (r() < 0.25) g.fillRect(x + w * 0.4, H - h - 14 - r() * 18, w * 0.2, 30);
+      x += w + (r() < 0.2 ? 6 : 0);
+    }
+    var lx = W * (0.55 + r() * 0.3), k = kind.split('_')[0];
+    g.beginPath();
+    if (k === 'eiffel' || k === 'tokyo') {
+      var top = k === 'eiffel' ? 300 : 280, base = k === 'eiffel' ? 48 : 40;
+      g.moveTo(lx - base, H); g.lineTo(lx - 6, H - top + 40); g.lineTo(lx, H - top); g.lineTo(lx + 6, H - top + 40);
+      g.lineTo(lx + base, H);
+      g.fill();
+      g.fillRect(lx - 22, H - 130, 44, 6); g.fillRect(lx - 14, H - 200, 28, 6);
+      if (k === 'tokyo') g.fillRect(lx - 1, H - top - 40, 2, 40);
+    } else if (k === 'cn') {
+      g.moveTo(lx - 6, H); g.lineTo(lx - 1.5, H - 340); g.lineTo(lx + 1.5, H - 340); g.lineTo(lx + 6, H); g.fill();
+      g.beginPath(); g.ellipse(lx, H - 225, 17, 8, 0, 0, 6.3); g.fill();
+      g.fillRect(lx - 1, H - 400, 2, 62);
+    } else if (k === 'empire') {
+      var hs = [230, 255, 275, 292, 305], ws = [56, 44, 32, 20, 10];
+      for (var i = 0; i < hs.length; i++) g.fillRect(lx - ws[i] / 2, H - hs[i], ws[i], hs[i]);
+      g.fillRect(lx - 1, H - 345, 2, 45);
+    } else if (k === 'bigben') {
+      g.fillRect(lx - 17, H - 250, 34, 250);
+      g.moveTo(lx - 20, H - 250); g.lineTo(lx, H - 305); g.lineTo(lx + 20, H - 250); g.fill();
+      g.globalCompositeOperation = 'destination-out';
+      g.beginPath(); g.arc(lx, H - 215, 10, 0, 6.3); g.fill();
+      g.globalCompositeOperation = 'source-over';
+    } else if (k === 'tv') {
+      g.fillRect(lx - 4, H - 290, 8, 290);
+      g.arc(lx, H - 225, 22, 0, 6.3); g.fill();
+      g.fillRect(lx - 1, H - 345, 2, 60);
+    } else if (k === 'domes') {
+      for (var d = 0; d < 3; d++) {
+        var dx = W * (0.3 + 0.2 * d) + r() * 40, rad = 38 - d * 6;
+        g.beginPath(); g.arc(dx, H - 150, rad, Math.PI, 0); g.fill();
+        g.fillRect(dx - rad, H - 150, rad * 2, 150);
+        g.fillRect(dx + rad + 8, H - 250 + d * 10, 7, 250); g.fillRect(dx - rad - 15, H - 240 + d * 10, 7, 240);
+        g.beginPath(); g.moveTo(dx + rad + 6, H - 250 + d * 10); g.lineTo(dx + rad + 11.5, H - 275 + d * 10);
+        g.lineTo(dx + rad + 17, H - 250 + d * 10); g.fill();
+      }
+    }
+  }
+
+  function palms(g, r, color) {
+    var spots = [[70, 1], [135, 0.7], [W - 80, 1], [W - 150, 0.75]];
+    g.strokeStyle = color; g.fillStyle = color; g.lineCap = 'round';
+    for (var i = 0; i < spots.length; i++) {
+      var x = spots[i][0], s = spots[i][1], lean = (i < 2 ? 1 : -1) * (25 + r() * 25) * s, ty = H - 250 * s;
+      g.lineWidth = 11 * s;
+      g.beginPath(); g.moveTo(x, H); g.quadraticCurveTo(x + lean * 0.2, H - 130 * s, x + lean, ty); g.stroke();
+      g.lineWidth = 4 * s;
+      for (var f = 0; f < 8; f++) {
+        var ang = -Math.PI + (f + 0.5) * Math.PI / 8, len = (70 + r() * 25) * s;
+        var ex = x + lean + Math.cos(ang) * len, ey = ty + Math.sin(ang) * len * 0.55 + len * 0.35;
+        g.beginPath(); g.moveTo(x + lean, ty);
+        g.quadraticCurveTo(x + lean + Math.cos(ang) * len * 0.55, ty + Math.sin(ang) * len * 0.8, ex, ey); g.stroke();
+      }
+    }
+  }
+
+  function ridges(g, r, count, t) {
+    for (var i = 0; i < count; i++) {
+      var base = H * 0.52 + i * 58, p1 = r() * 6, p2 = r() * 6, p3 = r() * 6, amp = 34 + r() * 26;
+      g.fillStyle = ink(t, 0.28 + 0.2 * i);
+      g.beginPath(); g.moveTo(0, H);
+      for (var x = 0; x <= W; x += 8) {
+        g.lineTo(x, base - amp * (0.5 + 0.5 * Math.sin(x / 150 + p1)) - amp * 0.5 * Math.sin(x / 61 + p2) - amp * 0.25 * Math.sin(x / 27 + p3));
+      }
+      g.lineTo(W, H); g.fill();
+    }
+  }
+
+  function dunes(g, r, t) {
+    for (var i = 0; i < 3; i++) {
+      var base = H * 0.62 + i * 40, p = r() * 6;
+      g.fillStyle = ink(t, 0.3 + 0.2 * i);
+      g.beginPath(); g.moveTo(0, H);
+      for (var x = 0; x <= W; x += 10) g.lineTo(x, base - 38 * Math.sin(x / 190 + p) - 12 * Math.sin(x / 70 + p * 2));
+      g.lineTo(W, H); g.fill();
+    }
+  }
+
+  function acacia(g, r, t) {
+    g.fillStyle = ink(t, 0.85); g.strokeStyle = ink(t, 0.85);
+    g.fillRect(0, H - 22, W, 22);
+    for (var i = 0; i < 5; i++) {
+      var x = 80 + r() * (W - 160), s = 0.6 + r() * 0.7;
+      g.lineWidth = 7 * s;
+      g.beginPath(); g.moveTo(x, H - 18); g.quadraticCurveTo(x + 8 * s, H - 70 * s, x + 2 * s, H - 110 * s); g.stroke();
+      g.beginPath(); g.ellipse(x + 2 * s, H - 118 * s, 78 * s, 15 * s, 0, 0, 6.3); g.fill();
+    }
+  }
+
+  function sun(g, t) {
+    var x = W * 0.5, y = H * 0.6, c = mix(t.c1, [255, 255, 255], 0.35);
+    g.fillStyle = rgba(c, 0.55 * SA);
+    g.beginPath(); g.arc(x, y, 76, 0, 6.3); g.fill();
+    g.globalCompositeOperation = 'destination-out';
+    for (var i = 0; i < 6; i++) g.fillRect(x - 80, y + 6 + i * 11, 160, 2 + i * 0.9);
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  function grid(g, t) {
+    var hy = H * 0.68, c = mix(t.c2, [255, 255, 255], 0.4);
+    g.strokeStyle = rgba(c, 0.35 * SA); g.lineWidth = 1.4;
+    for (var i = -12; i <= 12; i++) { g.beginPath(); g.moveTo(W / 2, hy); g.lineTo(W / 2 + i * 120, H); g.stroke(); }
+    for (var j = 0; j < 9; j++) { var y = hy + (H - hy) * Math.pow(j / 8, 2); g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+  }
+
+  function trails(g, r, t) {
+    g.clearRect(0, 0, 1920, 40);
+    var white = mix(t ? t.c1 : [255, 220, 160], [255, 255, 255], 0.6), red = [255, 60, 50];
+    var half = 960; // the strip is two identical halves so the slide loops
+    for (var k = 0; k < 9; k++) {
+      var x = r() * half, len = 40 + r() * 120, y = 12 + r() * 14;
+      var grad = g.createLinearGradient(x, 0, x + len, 0);
+      grad.addColorStop(0, rgba(g === gA ? white : red, 0)); grad.addColorStop(1, rgba(g === gA ? white : red, 0.9 * SA));
+      g.fillStyle = grad;
+      g.fillRect(x, y, len, 3); g.fillRect(x + half, y, len, 3);
+    }
+  }
+
+  // snow or rain: one tall tile drawn once, slid by a CSS animation (no per-frame work)
+  var gWx = document.getElementById('wx').getContext('2d'), wxEl = document.getElementById('wx');
+  // The tile is half size (480x540 for two stacked 960x540 screens) and the browser scales it up.
+  function weather(kind, r) {
+    gWx.setTransform(1, 0, 0, 1, 0, 0);
+    gWx.clearRect(0, 0, 480, 540);
+    wxKind = kind; wxCut = false; applyWx();
+    if (!kind) return;
+    gWx.setTransform(0.5, 0, 0, 0.5, 0, 0);
+    wxEl.style.animationDuration = kind === 'snow' ? '14s' : '1.6s';
+    for (var i = 0; i < (kind === 'snow' ? 90 : 100); i++) {
+      var x = r() * W, y = r() * H;
+      if (kind === 'snow') {
+        gWx.fillStyle = 'rgba(255,255,255,' + ((0.35 + r() * 0.4) * SA).toFixed(3) + ')';
+        var rad = 1.5 + r() * 2.5;
+        gWx.beginPath(); gWx.arc(x, y, rad, 0, 6.3); gWx.fill();
+        gWx.beginPath(); gWx.arc(x, y + H, rad, 0, 6.3); gWx.fill();
+      } else {
+        gWx.strokeStyle = 'rgba(200,215,255,' + ((0.2 + r() * 0.3) * SA).toFixed(3) + ')'; gWx.lineWidth = 2;
+        gWx.beginPath(); gWx.moveTo(x, y); gWx.lineTo(x - 3, y + 18); gWx.moveTo(x, y + H); gWx.lineTo(x - 3, y + H + 18); gWx.stroke();
+      }
+    }
+  }
+
+  var sceneTimer = 0;
+  function drawScene() {
+    clearTimeout(sceneTimer);
+    sceneTimer = setTimeout(function () {
+      var t = T[theme], r = rng(tseed);
+      gBack.clearRect(0, 0, W, H); gSway.clearRect(0, 0, W, H);
+      gA.clearRect(0, 0, 1920, 40); gB.clearRect(0, 0, 1920, 40);
+      var wantTrails = false;
+      if (t) {
+        for (var i = 0; i < t.l.length; i++) {
+          var parts = t.l[i].split(':'), name = parts[0], arg = parts[1] || '';
+          if (name === 'sun') sun(gBack, t);
+          else if (name === 'ridges') ridges(gBack, r, +arg || 3, t);
+          else if (name === 'dunes') dunes(gBack, r, t);
+          else if (name === 'hills') ridges(gBack, r, 2, t);
+          else if (name === 'acacia') acacia(gBack, r, t);
+          else if (name === 'grid') grid(gBack, t);
+          else if (name === 'skyline') skyline(gBack, r, ink(t, 0.5), arg);
+          else if (name === 'palms') palms(gSway, r, ink(t, 0.55));
+          else if (name === 'trails') wantTrails = true;
+        }
+        if (wantTrails) { trails(gA, r, t); trails(gB, r, t); }
+      }
+      document.getElementById('tA').style.display = document.getElementById('tB').style.display = wantTrails ? '' : 'none';
+      weather(t && t.wx ? t.wx : '', r);
+      // only layers that have something in them take part in compositing
+      var names = t ? t.l.join(',') : '';
+      document.getElementById('sway').style.display = names.indexOf('palms') >= 0 ? '' : 'none';
+      document.getElementById('back').style.display = /(^|,)(sun|ridges|dunes|hills|acacia|grid|skyline)/.test(names) ? '' : 'none';
+      SCENE.style.display = t ? 'block' : 'none';
+    }, 60);
+  }
+
+  // id: theme name ('' for none: the grade then comes from the song's seed alone)
+  window.setTheme = function (id, seed, m) {
+    var changed = id !== theme || (seed | 0) !== tseed;
+    theme = id || ''; tseed = seed | 0 || 1; mood = m;
+    grade();
+    if (changed) drawScene();
+  };
+  window.setMood = function (m) { mood = m; grade(); };
+  // a curated artist's theme (JSON) under its own id, sent just before setTheme
+  window.setSpec = function (id, json) { try { T[id] = JSON.parse(json); } catch (e) {} };
+  // dominant cover colors, [[r,g,b],...] or null
+  window.setPalette = function (a) { pal = a && a.length ? a : null; grade(); };
+
+  // ---- comfort: limits for long viewing (react_comfort=high|normal|vivid) ------------------------
+  // lum/peak: caps on the frame's average and brightest luminance; sat/br: caps on the grade;
+  // fps: render cap (Milkdrop motion is per frame, so fewer frames is slower motion); flash: most
+  // brightness jumps per second; probe: ms between luminance readings.
+  var LEVELS = {
+    high:   { lum: 0.55, peak: 0.80, sat: 0.50, br: 0.80, fps: 30, warm: 0.25, flash: 2, probe: 100, pulse: 0.5, maxSpeed: 1.2 },
+    normal: { lum: 0.65, peak: 0.90, sat: 0.55, br: 0.85, fps: 30, warm: 0.12, flash: 2, probe: 100, pulse: 0.8, maxSpeed: 1.4 },
+    vivid:  { lum: 1,    peak: 1,    sat: 0.55, br: 0.85, fps: 0,  warm: 0,    flash: 99, probe: 4000, pulse: 1, maxSpeed: 1.6 }
+  };
+  var C = LEVELS.high, WARM = [255, 190, 130], curBr = 0.8;
+  var gainEl = document.getElementById('gain');
+  var probe = document.createElement('canvas');
+  probe.width = 32; probe.height = 18;
+  var pg = probe.getContext('2d');
+  var due = 0, gain = 1, outL = 0, flashes = [], lastProbe = 0, lastProbeT = 0, mirrorHits = 0, lastMirror = 0;
+  var cm = { flashes: 0, avg: 0, peak: 0, n: 0, at: 0 };
+
+  window.setComfort = function (level) {
+    C = LEVELS[level] || LEVELS.high;
+    gain = 1; outL = 0; flashes = []; due = 0;
+    gainEl.style.opacity = 0;
+    grade();
+  };
+
+  // Reads a 32x18 copy of the picture (right after it is drawn), keeps the average and brightest
+  // luminance under the caps by dimming through a black layer (gain 150 ms attack, 600 ms release),
+  // holds brightness steady once the flash budget for the second is used, and looks for a picture
+  // that mirrors itself left to right.
+  function comfortTick(t) {
+    if (t - lastProbe < C.probe) return;
+    var dtp = lastProbeT ? t - lastProbe : 100;
+    lastProbe = t; lastProbeT = t;
+    var d;
+    try { pg.drawImage(canvas, 0, 0, 32, 18); d = pg.getImageData(0, 0, 32, 18).data; } catch (e) { return; }
+    var L = new Float32Array(576), sum = 0, mx = 0, i;
+    for (i = 0; i < 576; i++) {
+      var l = (0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2]) / 255;
+      L[i] = l; sum += l; if (l > mx) mx = l;
+    }
+    var avg = sum / 576 * curBr, peak = Math.min(1, mx * 1.1) * curBr;
+
+    if (C.probe < 1000) {
+      var want = 1;
+      if (avg > C.lum) want = Math.min(want, C.lum / avg);
+      if (peak > C.peak) want = Math.min(want, C.peak / peak);
+      while (flashes.length && t - flashes[0] > 1000) flashes.shift();
+      // the second's flashes are used up: the picture may only brighten slowly until one frees up
+      if (flashes.length >= C.flash) want = Math.min(want, (outL + 0.04) / Math.max(avg, 0.01));
+      want = Math.max(0.4, Math.min(1, want));
+      gain += (want - gain) * (1 - Math.exp(-dtp / (want < gain ? 150 : 600)));
+      var o = avg * gain;
+      if (o - outL >= 0.12 && outL > 0) { flashes.push(t); cm.flashes++; }
+      outL = o;
+      var op = (1 - gain).toFixed(3);
+      if (op !== gainEl.style.opacity) gainEl.style.opacity = op;
+    }
+    // Responsiveness, scored on the live picture: the Pearson correlation between how loud the music
+    // is and how much the picture changes from one reading to the next, over at least 10 s (100
+    // readings) of play once the blend has settled. One score per preset, 0..1, reported once with
+    // its sample count; the TV side downweights the presets that do not follow the music.
+    if (!cosOn && C.probe < 1000 && prevL && t - presetT > 6000 && energyS > 0.004) {
+      var df = 0, q2;
+      for (q2 = 0; q2 < 576; q2++) df += Math.abs(L[q2] - prevL[q2]);
+      df /= 576;
+      sc.n++; sc.se += energyS; sc.sd += df; sc.see += energyS * energyS; sc.sdd += df * df; sc.sed += energyS * df;
+      if (!sc.done && sc.n >= 100) {
+        sc.done = true;
+        var ve = sc.see - sc.se * sc.se / sc.n, vd = sc.sdd - sc.sd * sc.sd / sc.n, cv = sc.sed - sc.se * sc.sd / sc.n;
+        var rcor = ve > 1e-9 && vd > 1e-9 ? cv / Math.sqrt(ve * vd) : 0;
+        try { A.cal(curId, Math.max(0, Math.min(1, rcor)).toFixed(3), String(sc.n)); } catch (e2) {}
+      }
+    }
+    prevL = L;
+    cm.avg += avg * gain; cm.peak = Math.max(cm.peak, peak * gain); cm.n++;
+    if (dbg && t - cm.at >= 1000) {
+      if (cm.at) {
+        try {
+          A.comfort('flashes=' + cm.flashes + '/s avgL=' + (cm.avg / cm.n).toFixed(2) + ' peakL=' + cm.peak.toFixed(2) +
+            ' gain=' + gain.toFixed(2) + ' cap=' + (C.fps || 'none') + ' lum<=' + C.lum + ' peak<=' + C.peak + ' sat<=' + C.sat);
+        } catch (e) {}
+      }
+      cm.flashes = 0; cm.avg = 0; cm.peak = 0; cm.n = 0; cm.at = t;
+    }
+
+    // mirror-symmetric output (a kaleidoscope): twice in a row, four seconds apart, skips the preset
+    if (t - lastMirror >= 4000 && t - presetT > 6000) {
+      lastMirror = t;
+      var m = sum / 576, v = 0, dif = 0, x, y;
+      for (i = 0; i < 576; i++) v += (L[i] - m) * (L[i] - m);
+      var sd = Math.sqrt(v / 576);
+      for (y = 0; y < 18; y++) for (x = 0; x < 16; x++) dif += Math.abs(L[y * 32 + x] - L[y * 32 + 31 - x]);
+      var sim = 1 - (dif / 288) / (2 * sd + 0.001);
+      if (sd > 0.06 && sim > 0.85) {
+        if (++mirrorHits >= 2) { mirrorHits = 0; say('mirror:' + sim.toFixed(2)); }
+      } else {
+        mirrorHits = 0;
+      }
+    }
+  }
+
+  function frame(t) {
+    if (!running) return;
+    raf = requestAnimationFrame(frame);
+    var capMs = C.fps ? 1000 / C.fps : 0;
+    // a schedule that does not drift: skipping "until a full interval has passed" locks onto
+    // multiples of the display refresh (20, 15 ... fps) whenever frames take over 16 ms
+    if (capMs) {
+      if (t < due - 8) return;
+      due = due && t < due + capMs ? due + capMs : t + capMs;
+    }
+    var dt = last ? t - last : 16.7;
+    if (last) {
+      acc += dt;
+      if (++n >= 60) {
+        var iv = acc / n;
+        // against the cap, not 60 fps: a steady 30 fps under a 30 fps cap is healthy
+        try { A.frameMs(capMs ? 30 * (iv / capMs) / 1.35 : iv); } catch (e) {}
+        var need = Math.min(45, capMs ? 0.9 * C.fps : 45);
+        if (wxKind && !wxCut && t - presetT > 3000 && 1000 / iv < need) {
+          wxCut = true; applyWx();
+          say('weather:cut fps=' + Math.round(1000 / iv));
+        }
+        acc = 0;
+        n = 0;
+      }
+    }
+    last = t;
+    envelope(t);
+    // animation speed follows the tempo (bpm / 110, 0.6 to 1.6 and no more than the comfort level
+    // allows), eased over a couple of seconds so a tempo estimate never lurches the picture
+    var tsp = clk.on ? Math.max(0.6, Math.min(1.6, clk.bpm / 110)) : 1;
+    // loudness sets the pace: near a standstill in silence, quickest in the loud parts (never past
+    // what the comfort level allows)
+    var esp = energyN <= 0 ? 0.08 : 0.2 + 1.3 * Math.pow(energyN, 0.8);
+    var sp = Math.max(0.08, Math.min(C.maxSpeed, tsp * esp));
+    speed += (sp - speed) * (1 - Math.exp(-dt / (sp < speed ? 500 : 1200)));
+    // frames on schedule advance the animation by exactly one cap interval, so the 33.3/33.4 ms
+    // wobble of the display clock does not show up as uneven motion
+    var stepDt = capMs && Math.abs(dt - capMs) < 9 ? capMs : dt;
+    lastDt = Math.min(stepDt, 100);
+    if (cosOn) drawCos(t); else viz.render({ audioLevels: levels, elapsedTime: lastDt * speed / 1000 });
+    comfortTick(t);
+    if (dbg) stats(t);
+  }
+
+  // A scene instead of a Milkdrop preset (scenes.js): cosmos, night, rain, snow, fire, ocean, city, desert,
+  // or forest. The state it is given is the music: the beat
+  // clock's pulse (kickK, so the comfort limits apply), loudness, bass, mood, cover colors. Milkdrop is
+  // not rendered meanwhile.
+  var cosOn = false, cosC = document.getElementById('cosmos'), cg = cosC.getContext('2d'), cosLast = 0,
+      sceneSt = { k: 0, e: 0, bass: 0, mood: 0.5, p: 0.5, sp: 1, beats: 0, clock: false, pal: null };
+  function drawCos(t) {
+    var dt = cosLast ? Math.min(100, t - cosLast) : 16; cosLast = t;
+    var s = sceneSt;
+    s.k = Math.min(1, kickK / Math.max(0.2, C.pulse)); s.e = energyN; s.bass = Math.max(0, Math.min(1, lvl0 - 1));
+    s.mood = mood; s.p = C.pulse; s.sp = speed; s.beats = beatsN; s.clock = clk.on; s.pal = pal;
+    window.Scenes.draw(cg, t, dt, s);
+  }
+  window.setScene = function (name, arg) {
+    var got = window.Scenes ? window.Scenes.set(name || '', arg || '') : '';
+    var on = !!got; cosLast = 0;
+    if (on === cosOn) return;
+    cosOn = on; cosC.style.display = on ? 'block' : 'none'; canvas.style.display = on ? 'none' : 'block';
+    dimEl.style.display = on ? 'none' : 'block';
+  };
+
+  window.start = function () {
+    if (!viz && !init()) return;
+    if (!running) {
+      running = true;
+      last = 0;
+      acc = 0;
+      n = 0;
+      raf = requestAnimationFrame(frame);
+      say('running');
+    }
+  };
+
+  window.stop = function () {
+    running = false;
+    cancelAnimationFrame(raf);
+  };
+
+  grade();
+  say('loaded');
+})();
+</script>
+</body>
+</html>

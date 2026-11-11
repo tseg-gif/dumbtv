@@ -26,7 +26,17 @@ final class Ui {
 
     /** Black on light accents, white on dark ones. */
     static int ink(int color) {
-        return Color.luminance(color) > 0.5f ? 0xFF000000 : 0xFFFFFFFF;
+        return luminance(color) > 0.5f ? 0xFF000000 : 0xFFFFFFFF;
+    }
+
+    /** Relative luminance of an sRGB colour (same maths as Color.luminance, which needs API 24). */
+    private static float luminance(int color) {
+        double r = lin(Color.red(color) / 255.0), g = lin(Color.green(color) / 255.0), b = lin(Color.blue(color) / 255.0);
+        return (float) (0.2126 * r + 0.7152 * g + 0.0722 * b);
+    }
+
+    private static double lin(double c) {
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
     }
 
     static TextView text(Context c, float sp, int color, Typeface face) {

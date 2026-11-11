@@ -9,5 +9,6 @@ public final class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         Keeper.start(context);
+        SelfHeal.start(context);
     }
 }

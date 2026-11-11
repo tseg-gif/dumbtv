@@ -43,13 +43,30 @@ public final class Input extends Activity {
     private static final String AMAZON_LIVE_TV = "com.amazon.tv.livetv";
 
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final AudioManager.OnAudioFocusChangeListener focus = change -> { };
+    private final AudioManager.OnAudioFocusChangeListener focus = new AudioManager.OnAudioFocusChangeListener() {
+        @Override
+        public void onAudioFocusChange(int change) { }
+    };
     private TvView view;
     private TextView name, status;
     private String id;
-    private final Runnable hideName = () -> name.animate().alpha(0f).setDuration(250)
-            .withEndAction(() -> name.setVisibility(View.GONE)).start();
-    private final Runnable noSignal = () -> status(NO_SIGNAL);
+    private final Runnable hideName = new Runnable() {
+        @Override
+        public void run() {
+            name.animate().alpha(0f).setDuration(250).withEndAction(new Runnable() {
+                @Override
+                public void run() {
+                    name.setVisibility(View.GONE);
+                }
+            }).start();
+        }
+    };
+    private final Runnable noSignal = new Runnable() {
+        @Override
+        public void run() {
+            status(NO_SIGNAL);
+        }
+    };
 
     private final TvView.TvInputCallback watch = new TvView.TvInputCallback() {
         @Override

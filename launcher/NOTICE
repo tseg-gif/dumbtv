@@ -1,0 +1,17 @@
+dumbtv home (fork) - third-party notices for the visual layers
+
+Drawn by code in this repository (no files, nothing to attribute):
+  Stage, Scenes, Landmarks, Variety, Journey - side speakers, theme vignettes (money, love, street,
+  party, grief, faith, ocean, fire, city, space), city silhouettes and routes. All shapes are
+  procedural Canvas paths. They contain no logos, team marks, brand art, real currency detail or text
+  on buildings. Lottie and Konfetti were not needed and are not included.
+
+Bundled assets:
+  Butterchurn (MIT) and butterchurn-presets (MIT) - assets/butterchurn.min.js, assets/pre_*.json,
+    licences in assets/LICENSE-butterchurn*.txt.
+
+Data fetched at run time over the network (nothing is bundled, results are cached on the device):
+  Wikidata (CC0 1.0) - hometown and landmark labels for artists without a hand-made route.
+  MusicBrainz (core data CC0) - artist country, area and genre tags.
+  LRCLIB (public lyrics API) - plain lyrics, matched against theme keywords on the device only;
+    never displayed or redistributed.

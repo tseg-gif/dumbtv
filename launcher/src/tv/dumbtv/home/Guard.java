@@ -54,8 +54,18 @@ public final class Guard extends AccessibilityService {
     private static Guard running;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable uncover = this::uncover;
-    private final Runnable launch = () -> home(this);
+    private final Runnable uncover = new Runnable() {
+        @Override
+        public void run() {
+            Guard.this.uncover();
+        }
+    };
+    private final Runnable launch = new Runnable() {
+        @Override
+        public void run() {
+            home(Guard.this);
+        }
+    };
     private View cover;
     private long lastLaunch;
     private boolean onAmazonHome;
@@ -65,6 +75,11 @@ public final class Guard extends AccessibilityService {
             if (!paused && onAmazonHome) launchWhenCovered();
         }
     };
+
+    /** True while the system has this service bound. */
+    static boolean connected() {
+        return running != null;
+    }
 
     /** Lets Amazon's home stay on screen until the user leaves it. */
     static void pause() {

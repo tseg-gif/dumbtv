@@ -31,7 +31,12 @@ final class Catalog {
         collect(pm, found, Intent.CATEGORY_LAUNCHER, false, c.getPackageName());
         List<Item> out = new ArrayList<>(found.values());
         Collator collator = Collator.getInstance();
-        Collections.sort(out, (a, b) -> collator.compare(a.label.toString(), b.label.toString()));
+        Collections.sort(out, new java.util.Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return collator.compare(a.label.toString(), b.label.toString());
+            }
+        });
         return out;
     }
 
@@ -62,13 +67,23 @@ final class Catalog {
      * app for the input; {@link Input#intent} decides whether a tile opens that or the built-in
      * screen.
      */
+    private static boolean hidden(TvInputInfo in, Context c) {
+        try { return (Boolean) TvInputInfo.class.getMethod("isHidden", Context.class).invoke(in, c); }
+        catch (Exception e) { return false; }
+    }
+
+    private static CharSequence customLabel(TvInputInfo in, Context c) {
+        try { return (CharSequence) TvInputInfo.class.getMethod("loadCustomLabel", Context.class).invoke(in, c); }
+        catch (Exception e) { return null; }
+    }
+
     static List<Item> inputs(Context c, TvInputManager tv) {
         List<Item> out = new ArrayList<>();
         if (tv == null) return out;
         List<Item> other = new ArrayList<>();
         for (TvInputInfo in : tv.getTvInputList()) {
-            if (!in.isPassthroughInput() || in.isHidden(c)) continue;
-            CharSequence label = in.loadCustomLabel(c);
+            if (!in.isPassthroughInput() || hidden(in, c)) continue;
+            CharSequence label = customLabel(in, c);
             if (TextUtils.isEmpty(label)) label = in.loadLabel(c);
             Intent view = new Intent(Intent.ACTION_VIEW,
                     TvContract.buildChannelUriForPassthroughInput(in.getId()));
@@ -77,8 +92,18 @@ final class Catalog {
             (in.getType() == TvInputInfo.TYPE_HDMI ? out : other).add(it);
         }
         Collator collator = Collator.getInstance();
-        Collections.sort(out, (a, b) -> collator.compare(a.label.toString(), b.label.toString()));
-        Collections.sort(other, (a, b) -> collator.compare(a.label.toString(), b.label.toString()));
+        Collections.sort(out, new java.util.Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return collator.compare(a.label.toString(), b.label.toString());
+            }
+        });
+        Collections.sort(other, new java.util.Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return collator.compare(a.label.toString(), b.label.toString());
+            }
+        });
         out.addAll(other);
         return out;
     }
@@ -89,6 +114,14 @@ final class Catalog {
 
     static boolean shown(Config cfg, String kind, Item it) {
         if (cfg.list(kind + ".hide").contains(it.id)) return false;
+        // hide.like=luna,prime video: any app whose name contains one of these stays hidden, and
+        // keeps coming back hidden after a reinstall because the words live in the settings file.
+        if (APPS.equals(kind)) {
+            String name = it.label.toString().toLowerCase(java.util.Locale.ROOT);
+            for (String word : cfg.list("hide.like")) {
+                if (name.contains(word.toLowerCase(java.util.Locale.ROOT))) return false;
+            }
+        }
         return !APPS.equals(kind) || it.leanback || cfg.list("apps.show").contains(it.id);
     }
 
@@ -117,9 +150,19 @@ final class Catalog {
         for (Item it : all) {
             if (shown(cfg, kind, it)) out.add(it);
         }
-        Collections.sort(out, (a, b) -> Integer.compare(rank(order, a.id), rank(order, b.id)));
+        Collections.sort(out, new java.util.Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return Integer.compare(rank(order, a.id), rank(order, b.id));
+            }
+        });
         // The sort is stable, so apps with no record keep the user's order after the rest.
-        if (recent != null) Collections.sort(out, (a, b) -> Recent.compare(recent, a.id, b.id));
+        if (recent != null) Collections.sort(out, new java.util.Comparator<Item>() {
+            @Override
+            public int compare(Item a, Item b) {
+                return Recent.compare(recent, a.id, b.id);
+            }
+        });
         return out;
     }
 

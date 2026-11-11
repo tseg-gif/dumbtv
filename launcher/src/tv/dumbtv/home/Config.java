@@ -56,9 +56,9 @@ final class Config {
         }
     }
 
-    static final Choice ACCENT = new Choice("accent", "Accent color", "blue",
-            new String[] {"white", "blue", "cyan", "green", "amber", "red", "pink", "violet"},
-            new String[] {"White", "Blue", "Cyan", "Green", "Amber", "Red", "Pink", "Violet"});
+    static final Choice ACCENT = new Choice("accent", "Accent color", "cyan",
+            new String[] {"white", "blue", "cyan", "green", "amber", "red", "pink", "violet", "neon"},
+            new String[] {"White", "Blue", "Cyan", "Green", "Amber", "Red", "Pink", "Violet", "Neon green"});
     static final Choice TILES = new Choice("tiles", "Tile size", "medium",
             new String[] {"small", "medium", "large"},
             new String[] {"Small", "Medium", "Large"});
@@ -84,9 +84,9 @@ final class Config {
     static final Choice SWITCH = new Choice("switch", "Open inputs with", "auto",
             new String[] {"auto", "tv", "home"},
             new String[] {"Automatic", "The TV's app", "dumbtv home"});
-    static final Choice BACKGROUND = new Choice("background", "Background", "black",
-            new String[] {"black", "graphite", "midnight", "image", "adaptive", "adaptive-tint"},
-            new String[] {"Black", "Graphite", "Midnight", "Image file", "Adaptive solid", "Adaptive wallpaper tint"});
+    static final Choice BACKGROUND = new Choice("background", "Background", "nebula",
+            new String[] {"black", "graphite", "midnight", "image", "adaptive", "adaptive-tint", "nebula", "wp_la", "wp_synth", "wp_ocean", "wp_aurora", "wp_tokyo", "wp_dunes", "wp_peaks", "wp_space", "wp_la_blue", "wp_la_rose", "wp_la_night", "wp_la_teal"},
+            new String[] {"Black", "Graphite", "Midnight", "Image file", "Adaptive solid", "Adaptive wallpaper tint", "Nebula (animated)", "Los Angeles sunset", "Synthwave", "Deep ocean", "Northern lights", "Tokyo neon rain", "Desert dusk", "Mountain lake", "Ringed planet", "LA blue hour", "LA rose haze", "LA night freeway", "LA teal and gold"});
     static final Choice DIM = new Choice("dim", "Image dim", "40",
             new String[] {"0", "20", "40", "60", "80"},
             new String[] {"0%", "20%", "40%", "60%", "80%"});
@@ -105,16 +105,68 @@ final class Config {
 
     static final Choice TILE_STYLE = new Choice("tile_style", "App tile style", "original",
             new String[] {"original", "afterglow"}, new String[] {"Original", "Afterglow"});
-    static final Choice[] CHOICES = {ACCENT, TILES, LAYOUT, ORDER, LABELS, CLOCK, MEMORY, INPUTS, SWITCH, BACKGROUND, DIM, ROTATE, LOCK, TILE_STYLE};
+    /** The pills under the clock: Appstore, Spotify and whatever else Options picks. */
+    static final Choice QUICK = new Choice("quick_row", "Quick launch row", "on",
+            new String[] {"on", "off"}, new String[] {"Shown", "Hidden"});
+    /** A chip beside Options that shows whether a VPN is up, and opens the VPN app. */
+    static final Choice VPN_CHIP = new Choice("vpn_chip", "VPN indicator", "on",
+            new String[] {"on", "off"}, new String[] {"Shown", "Hidden"});
+    /** Bars and a bass pulse behind the tiles, driven by the audio playing (needs RECORD_AUDIO via adb). */
+    static final Choice REACT = new Choice("react", "Music reactive", "on",
+            new String[] {"on", "off"}, new String[] {"On", "Off"});
+    static final Choice REACT_STYLE = new Choice("react_style", "Visualizer style", "auto",
+            new String[] {"auto", "bars", "wave", "mountains", "ring", "orbit", "fountain", "warp", "ripples",
+                "matrix", "spiro", "lightning", "tunnel", "aurora", "fireworks", "helix", "blob", "kaleido",
+                "synth", "beams", "rays", "scenic", "beach", "misty", "ocean", "snow", "rain",
+                "fireflies", "coast", "moonlit", "milkdrop", "money", "journey", "love", "street", "party", "grief",
+                "faith", "fire", "city", "space", "glowroom", "glowroom_dunes", "glowroom_tunnel", "glowroom_planet",
+                "glowroom_rain", "glowroom_galaxy", "glowroom_beam", "gallery", "calm_gallery",
+                "glow_firefly_meadow", "glow_aurora_ridge", "glow_night_ocean", "glow_sunset_rays", "glow_synth_road", "glow_hyperspace", "glow_helix", "glow_mandala_bloom", "glow_lanterns", "glow_embers", "glow_plexus", "glow_city_drive", "glow_vortex", "glow_ink_flow", "glow_eclipse", "glow_crystal_tunnel", "glow_pond_ripples", "glow_lissajous_ribbons", "glow_snowfall", "glow_bubbles", "glow_pendulum_wave", "glow_torus_knot", "glow_supernova", "glow_sound_lines", "glow_atom_orbits", "glow_jellyfish"},
+            new String[] {"Different every song", "Bars", "Wave", "Mountains", "Ring", "Orbits", "Fountain",
+                "Warp", "Ripples", "LED matrix", "Spirograph", "Lightning", "Tunnel", "Aurora",
+                "Fireworks", "Helix", "Blob", "Kaleidoscope", "Synthwave", "Laser beams", "Sunburst", "Nature scenes only", "Sunset beach",
+                "Misty mountains", "Night ocean", "Snowy peaks", "Rainy hills", "Firefly forest",
+                "Golden coast", "Moonlit shore", "Milkdrop (experimental)", "Money", "City journey", "Love", "Street / night drive",
+                "Party / club", "Rain / grief", "Faith / sunrise", "Fire", "City lights", "Space",
+                "Glow rooms (GL particles)", "Glow: dune glide", "Glow: tunnel rush", "Glow: planet",
+                "Glow: light rain", "Glow: galaxy", "Glow: beam hall", "Gallery (every scene)", "Meditation gallery (every calm scene)",
+                "Glow: firefly meadow", "Glow: aurora ridge", "Glow: night ocean", "Glow: sunset rays", "Glow: synth road", "Glow: hyperspace", "Glow: helix", "Glow: mandala bloom", "Glow: lanterns", "Glow: embers", "Glow: plexus", "Glow: city drive", "Glow: vortex", "Glow: ink flow", "Glow: eclipse", "Glow: crystal tunnel", "Glow: pond ripples", "Glow: lissajous ribbons", "Glow: snowfall", "Glow: bubbles", "Glow: pendulum wave", "Glow: torus knot", "Glow: supernova", "Glow: sound lines", "Glow: atom orbits", "Glow: jellyfish"});
+    /** Looks the artist up on MusicBrainz (country, genre) and themes the visuals to match. */
+    /** Woofer and tweeter cones on the left and right edges that move with the kicks and hats. */
+    static final Choice REACT_SPEAKERS = new Choice("react_speakers", "Side speakers", "auto",
+            new String[] {"auto", "on", "off"}, new String[] {"Auto (hip-hop, bass)", "On", "Off"});
+    static final Choice REACT_ORIGIN = new Choice("react_origin", "Visuals match the artist's origin", "on",
+            new String[] {"on", "off"}, new String[] {"On", "Off"});
+    /** One line about the song from Wikipedia when it starts (uses the internet). */
+    static final Choice REACT_FACTS = new Choice("react_facts", "Song fact captions", "off",
+            new String[] {"off", "on"}, new String[] {"Off", "On"});
+    static final Choice REACT_COLOR = new Choice("react_color", "Visualizer colors", "soft",
+            new String[] {"soft", "vivid", "accent"},
+            new String[] {"Soft (easy on the eyes)", "Vivid", "Accent only"});
+    static final Choice REACT_CINEMA = new Choice("react_cinema", "Cinema clips in the music rotation", "on",
+            new String[] {"on", "off"}, new String[] {"On (when clips are on the TV)", "Off"});
+    /** Piano scenes: varied colors, or only warm ones (rose to amber, no blue light). */
+    static final Choice PIANO_PALETTE = new Choice("piano_palette", "Piano colors", "auto",
+            new String[] {"auto", "warm"}, new String[] {"Varied", "Warm, low blue (easy on the eyes)"});
+    static final Choice PIANO_DIM = new Choice("piano_dim", "Piano brightness", "dim",
+            new String[] {"bright", "normal", "dim", "night"}, new String[] {"Bright", "Normal", "Dim", "Night (darkest)"});
+    /** While music plays: hide the apps, show the song and the visualizer. Any key brings them back. */
+    static final Choice MUSIC_MODE = new Choice("music_mode", "Hide apps while music plays", "on",
+            new String[] {"on", "off"}, new String[] {"On", "Off"});
+    /** The sound while moving along a row: soft marimba notes, a short buzz, or nothing. */
+    static final Choice SCROLL_SOUND = new Choice("scroll_sound", "Scroll sound", "tune",
+            new String[] {"tune", "pop", "boing", "bloop", "arcade", "bongo", "notes", "glass", "marimba", "kalimba", "bubble", "synth", "buzz", "off"},
+            new String[] {"Melody", "Pop", "Boing", "Bloop", "Arcade", "Bongo", "Harmony chimes", "Glass pluck", "Marimba", "Kalimba", "Water drops", "Synth arpeggio", "Buzz", "Off"});
+    static final Choice[] CHOICES = {ACCENT, TILES, LAYOUT, ORDER, LABELS, CLOCK, MEMORY, INPUTS, SWITCH, BACKGROUND, DIM, ROTATE, LOCK, TILE_STYLE, QUICK, VPN_CHIP, REACT, REACT_STYLE, REACT_SPEAKERS, SCROLL_SOUND, REACT_COLOR, REACT_CINEMA, PIANO_PALETTE, PIANO_DIM, REACT_ORIGIN, REACT_FACTS, MUSIC_MODE};
 
     /** Folder of wallpapers, next to home.conf, that Background › Image file rotates through. */
     static final String WALLPAPERS = "wallpapers";
     private static final String OFFSET = "wallpaper.offset";
 
     private static final int[] ACCENTS = {
-        0xFFFFFFFF, 0xFF3D8BFF, 0xFF2BC4E8, 0xFF34C759, 0xFFFFB340, 0xFFFF5147, 0xFFFF5C9D, 0xFFA07CFF,
+        0xFFFFFFFF, 0xFF3D8BFF, 0xFF2BC4E8, 0xFF34C759, 0xFFFFB340, 0xFFFF5147, 0xFFFF5C9D, 0xFFA07CFF, 0xFF39FF14,
     };
-    private static final int[] BACKGROUNDS = {0xFF000000, 0xFF141518, 0xFF0B1220, 0xFF000000, 0xFF141518, 0xFF141518};
+    private static final int[] BACKGROUNDS = {0xFF000000, 0xFF141518, 0xFF0B1220, 0xFF000000, 0xFF141518, 0xFF141518, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F, 0xFF05060F};
 
     private static Config instance;
 

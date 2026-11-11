@@ -81,9 +81,12 @@ final class Meter extends View {
         } else if (Math.abs(target - shown) > 0.001f) {
             animation = ValueAnimator.ofFloat(shown, target);
             animation.setDuration(300);
-            animation.addUpdateListener(a -> {
-                shown = (Float) a.getAnimatedValue();
-                invalidate();
+            animation.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() {
+                @Override
+                public void onAnimationUpdate(android.animation.ValueAnimator a) {
+                    shown = (Float) a.getAnimatedValue();
+                    invalidate();
+                }
             });
             animation.start();
         }

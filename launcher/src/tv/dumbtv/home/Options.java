@@ -49,18 +49,56 @@ public final class Options extends Activity {
         list.addView(title);
 
         for (Config.Choice c : Config.CHOICES) list.addView(choice(c));
-        list.addView(action("Next wallpaper", () -> {
-            cfg.nextWallpaper();
-            refresh();
+        list.addView(action("Next wallpaper", new Runnable() {
+            @Override
+            public void run() {
+                cfg.nextWallpaper();
+                refresh();
+            }
         }));
         list.addView(gap());
-        list.addView(action("Apps on home screen", () -> pick(Catalog.APPS)));
-        list.addView(action("Inputs on home screen", () -> pick(Catalog.INPUTS)));
-        list.addView(action("Reset order, names and hidden tiles", this::reset));
-        list.addView(action("Open Amazon's home screen", () -> {
-            Guard.amazon(this);
-            finish();
+        list.addView(action("Apps on home screen", new Runnable() {
+            @Override
+            public void run() {
+                pick(Catalog.APPS);
+            }
         }));
+        list.addView(action("Inputs on home screen", new Runnable() {
+            @Override
+            public void run() {
+                pick(Catalog.INPUTS);
+            }
+        }));
+        list.addView(action("Quick launch apps", new Runnable() {
+            @Override
+            public void run() {
+                pickQuick();
+            }
+        }));
+        list.addView(action("Reset order, names and hidden tiles", new Runnable() {
+            @Override
+            public void run() {
+                reset();
+            }
+        }));
+        list.addView(gap());
+        list.addView(action("Open the Appstore", then("appstore")));
+        list.addView(action("Search the Appstore", new Runnable() {
+            @Override
+            public void run() {
+                Quick.appstoreSearch(Options.this, cfg);
+            }
+        }));
+        list.addView(action("Lights (Bluetooth bars)", new Runnable() {
+            @Override
+            public void run() {
+                startActivity(new android.content.Intent(Options.this, LightsActivity.class));
+            }
+        }));
+        list.addView(action("Wi-Fi settings", then("wifi")));
+        list.addView(action("Display settings", then("display")));
+        list.addView(action("VPN app", then("vpn")));
+        list.addView(action("Open Amazon's home screen", then("amazon")));
 
         TextView about = Ui.text(this, 13, Ui.FAINT, Ui.MEDIUM);
         about.setLineSpacing(0, 1.4f);
@@ -72,6 +110,7 @@ public final class Options extends Activity {
                 + "\nOn Fire OS 8 adb cannot reach that folder; use /sdcard/Android/media/"
                 + getPackageName() + "/ instead"
                 + "\nAdaptive wallpaper tint shows graphite until you add a wallpaper"
+                + "\nQuick launch pills: Options > Quick launch apps; ids and the Appstore link are in the settings file"
                 + "\nNo internet permission. No tracking, no ads, no accounts.");
         list.addView(about);
 
@@ -90,6 +129,17 @@ public final class Options extends Activity {
         for (Runnable r : refreshers) r.run();
     }
 
+    /** Runs a Quick action, then closes Options so the app it opens is in front. */
+    private Runnable then(final String id) {
+        return new Runnable() {
+            @Override
+            public void run() {
+                Quick.run(Options.this, cfg, id);
+                finish();
+            }
+        };
+    }
+
     private View choice(Config.Choice c) {
         LinearLayout row = row();
         TextView name = label(c.title);
@@ -97,14 +147,22 @@ public final class Options extends Activity {
         value.setGravity(Gravity.END);
         row.addView(name, new LinearLayout.LayoutParams(0, WRAP, 1f));
         row.addView(value, new LinearLayout.LayoutParams(WRAP, WRAP));
-        row.setOnClickListener(v -> step(c, 1));
-        row.setOnKeyListener((v, code, e) -> {
-            if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
-            if (code == KeyEvent.KEYCODE_DPAD_LEFT) return step(c, -1);
-            if (code == KeyEvent.KEYCODE_DPAD_RIGHT) return step(c, 1);
-            return false;
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                step(c, 1);
+            }
         });
-        Runnable show = () -> {
+        row.setOnKeyListener(new View.OnKeyListener() {
+            @Override
+            public boolean onKey(View v, int code, KeyEvent e) {
+                if (e.getAction() != KeyEvent.ACTION_DOWN) return false;
+                if (code == KeyEvent.KEYCODE_DPAD_LEFT) return step(c, -1);
+                if (code == KeyEvent.KEYCODE_DPAD_RIGHT) return step(c, 1);
+                return false;
+            }
+        });
+        final Runnable show = new Runnable() { @Override public void run() {
             boolean focused = row.isFocused();
             String text = c.name(cfg.get(c));
             if (c == Config.ACCENT) {
@@ -122,10 +180,15 @@ public final class Options extends Activity {
                     && !"adaptive-tint".equals(cfg.get(Config.BACKGROUND))
                     || c == Config.SWITCH && "off".equals(cfg.get(Config.INPUTS));
             row.setAlpha(off ? 0.4f : 1f);
-        };
-        row.setOnFocusChangeListener((v, has) -> show.run());
+        } };
+        row.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+            @Override
+            public void onFocusChange(View v, boolean has) {
+                show.run();
+            }
+        });
         refreshers.add(show);
-        refreshers.add(() -> style(row));
+        refreshers.add(styler(row));
         return row;
     }
 
@@ -148,8 +211,13 @@ public final class Options extends Activity {
         TextView chevron = Ui.text(this, 16, Ui.MUTED, Ui.MEDIUM);
         chevron.setText("›");
         row.addView(chevron);
-        row.setOnClickListener(v -> run.run());
-        refreshers.add(() -> style(row));
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                run.run();
+            }
+        });
+        refreshers.add(styler(row));
         return row;
     }
 
@@ -163,6 +231,15 @@ public final class Options extends Activity {
         lp.bottomMargin = dp(4);
         row.setLayoutParams(lp);
         return row;
+    }
+
+    private Runnable styler(final View row) {
+        return new Runnable() {
+            @Override
+            public void run() {
+                style(row);
+            }
+        };
     }
 
     private void style(View row) {
@@ -197,8 +274,37 @@ public final class Options extends Activity {
         }
         new AlertDialog.Builder(this, Ui.DIALOG)
                 .setTitle(Catalog.APPS.equals(kind) ? "Apps on home screen" : "Inputs on home screen")
-                .setMultiChoiceItems(names, on, (d, which, checked) ->
-                        Catalog.setShown(cfg, kind, items.get(which), checked))
+                .setMultiChoiceItems(names, on, new android.content.DialogInterface.OnMultiChoiceClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int which, boolean checked) {
+                        Catalog.setShown(cfg, kind, items.get(which), checked);
+                    }
+                })
+                .setPositiveButton("Done", null)
+                .show();
+    }
+
+    private void pickQuick() {
+        List<Quick.Entry> all = Quick.candidates(this);
+        List<String> current = Quick.ids(cfg);
+        CharSequence[] names = new CharSequence[all.size()];
+        boolean[] on = new boolean[all.size()];
+        for (int i = 0; i < all.size(); i++) {
+            names[i] = all.get(i).label;
+            on[i] = current.contains(all.get(i).id);
+        }
+        new AlertDialog.Builder(this, Ui.DIALOG)
+                .setTitle("Quick launch apps")
+                .setMultiChoiceItems(names, on, new android.content.DialogInterface.OnMultiChoiceClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int which, boolean checked) {
+                        String id = all.get(which).id;
+                        List<String> ids = Quick.ids(cfg);
+                        ids.remove(id);
+                        if (checked) ids.add(id);
+                        Quick.saveIds(cfg, ids);
+                    }
+                })
                 .setPositiveButton("Done", null)
                 .show();
     }
@@ -207,7 +313,12 @@ public final class Options extends Activity {
         new AlertDialog.Builder(this, Ui.DIALOG)
                 .setTitle("Reset the home screen layout?")
                 .setMessage("Order, names and hidden tiles go back to default. Colors and sizes stay.")
-                .setPositiveButton("Reset", (d, w) -> cfg.removePrefix("name.", "apps.", "inputs."))
+                .setPositiveButton("Reset", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int w) {
+                        cfg.removePrefix("name.", "apps.", "inputs.");
+                    }
+                })
                 .setNegativeButton("Cancel", null)
                 .show();
     }
