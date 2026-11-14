@@ -16,6 +16,9 @@ final class RigGeom {
     static final int LINE = 0, POLY = 1, ELLIPSE = 2, DOT = 3;
     static final int COL_MAIN = 0, COL_ALT = 1, COL_WHITE = 2, COL_SHADE = 3;
     static final float MAX_ALPHA = 0.55f;
+    /** a line or ring whose intended alpha is below this is skipped, never drawn faint; the ones kept are drawn solid in [LINE_LO, LINE_HI] */
+    static final float LINE_MIN_PEAK = 0.45f, LINE_LO = 0.6f, LINE_HI = 0.7f;
+    static final float BEAM_MAX_S = 12f; // a beam episode ends after this many seconds unless the song entry prefers beams
 
     static final class Prim {
         int kind, col;
@@ -39,6 +42,8 @@ final class RigGeom {
         int kind;              // Director.INTRO..OUTRO
         float kindProgress;    // build / outro progress 0..1
         float lookAge;         // seconds
+        float beamAge;         // seconds since this beam episode started (0 when no beams are showing)
+        boolean beamsFree;     // the song entry lists beams as a preferred family: no time cap
     }
 
     private final ArrayList<Prim> pool = new ArrayList<>();
@@ -47,7 +52,7 @@ final class RigGeom {
     private int W, H;
     private float lw;
     private In in;
-    private float swell;
+    private float swell, fadeA = 1f;
 
     private Prim next(int kind, int col, float a, float w) {
         Prim p;
@@ -62,12 +67,17 @@ final class RigGeom {
         p.a = Math.min(MAX_ALPHA, Math.max(0f, a)) * swell;
         if (col == COL_SHADE) p.a = Math.min(0.92f, a); // silhouettes are dark, not light: no cap, no swell
         p.w = Math.min(w, 0.004f * H);
+        if (kind == LINE || kind == ELLIPSE) { // crisp strokes: solid alpha (only the look crossfade changes it), the beat pulses the width
+            p.a = Math.min(LINE_HI, Math.max(LINE_LO, a)) * fadeA;
+            p.w = Math.min(w * (1f + 0.4f * Math.max(0f, Math.min(1f, in.kickEnv))), 0.004f * H);
+        }
         p.n = 0;
         out.add(p);
         return p;
     }
 
     private void line(int col, float a, float w, float x1, float y1, float x2, float y2) {
+        if (a < LINE_MIN_PEAK) return;
         Prim p = next(LINE, col, a, w);
         p.x1 = x1;
         p.y1 = y1;
@@ -83,6 +93,7 @@ final class RigGeom {
     }
 
     private void ring(int col, float a, float w, float cx, float cy, float rx, float ry) {
+        if (a < LINE_MIN_PEAK) return;
         Prim p = next(ELLIPSE, col, a, w);
         p.x1 = cx;
         p.y1 = cy;
@@ -112,6 +123,7 @@ final class RigGeom {
         H = hgt;
         in = s;
         lw = Math.max(2f, 0.0022f * H);
+        fadeA = alpha;
         swell = alpha * (0.75f + 0.25f * Math.max(0f, Math.min(1f, s.kickEnv)));
         float beams = beamLevel(s);
         if (look.beam != 0 && beams > 0.02f) beam(look.beam, look.pattern, s, beams);
@@ -119,21 +131,22 @@ final class RigGeom {
         accent(look.accent, s, density);
         if (s.ringKick) { // kick style ring: a wide low shockwave leaves the floor on every kick
             float d = (s.t - s.lastKickT) / 0.9f;
-            if (d >= 0f && d < 1f) ring(COL_ALT, 0.34f * (1f - d), lw * 1.5f, 0.5f * W, 0.62f * H, W * (0.08f + 0.5f * d), H * (0.04f + 0.26f * d));
+            if (d >= 0f && d < 0.75f) ring(COL_ALT, 0.62f, lw * 1.5f, 0.5f * W, 0.62f * H, W * (0.08f + 0.5f * d), H * (0.04f + 0.26f * d));
         }
         return out;
     }
 
-    /** how much of the beam layer shows in this section (intro none, build opening, drop/chorus full, breakdown none, outro fading) */
+    /**
+     * How much of the beam layer shows: only in a drop or chorus, never in a quiet song, growing out from the sources over
+     * the first 0.8 s and (unless the song entry prefers beams) retracting after BEAM_MAX_S. The level is the beams' reach,
+     * never their alpha: a beam is either a crisp line or absent.
+     */
     static float beamLevel(In s) {
-        switch (s.kind) {
-            case Director.INTRO: return 0f;
-            case Director.BUILD: return 0.35f + 0.5f * s.kindProgress;
-            case Director.DROP: return 1f;
-            case Director.CHORUS: return 1f;
-            case Director.BREAK: return 0f;
-            default: return Math.max(0f, 0.6f * (1f - s.kindProgress * 1.4f));
-        }
+        if (s.kind != Director.DROP && s.kind != Director.CHORUS) return 0f;
+        float quiet = Math.max(0f, Math.min(1f, (s.ener - 0.25f) / 0.15f));
+        float grow = Math.max(0f, Math.min(1f, s.beamAge / 0.8f));
+        float cap = s.beamsFree ? 1f : Math.max(0f, Math.min(1f, (BEAM_MAX_S + 1f - s.beamAge) / 1f));
+        return quiet * grow * cap;
     }
 
     static float densityFor(int kind, float progress) {
@@ -150,74 +163,72 @@ final class RigGeom {
     // ---------------- beams ----------------
 
     private void beam(int type, int pat, In s, float lvl) {
-        float spread = s.kind == Director.BUILD ? 0.55f + 0.45f * s.kindProgress : 1f; // beams widen through a build
-        float L = 1.5f * H;
+        final float A = 0.64f; // beam strokes are crisp: solid, never faint; lvl is their reach
+        float spread = 1f;
+        float L = 1.5f * H * lvl;
         double bar = s.barPos;
         switch (type) {
             case 1: { // fan lasers: left cluster answers the kick, right cluster the snare
-                int n = new int[] {7, 11, 9}[pat];
+                int n = new int[] {5, 7, 6}[pat];
                 for (int side = 0; side < 2; side++) {
                     float ex = pat == 1 ? 0.5f * W : (side == 0 ? 0.1f : 0.9f) * W;
                     if (pat == 1 && side == 1) break;
                     float ey = pat == 2 ? 1.02f * H : -0.02f * H;
                     float dir = pat == 2 ? -1f : 1f;
-                    float env = pat == 1 ? 0.7f : (side == 0 ? s.kickEnv : s.snareEnv);
                     double sweep = Math.sin(2 * Math.PI * bar / (pat == 0 ? 4 : 2) + side * Math.PI) * 0.26 * spread;
                     for (int i = 0; i < n; i++) {
                         double u = n == 1 ? 0 : (i / (double) (n - 1)) * 2 - 1;
                         double ang = Math.PI / 2 + u * 0.62 * spread + sweep + (side == 0 ? 0.14 : -0.14) * (pat == 1 ? 0 : 1);
-                        float a = lvl * (0.26f + 0.2f * env);
-                        line(i % 2 == 0 ? COL_MAIN : COL_ALT, a, lw, ex, ey, ex + (float) Math.cos(ang) * L, ey + dir * (float) Math.sin(ang) * L);
+                        line(i % 2 == 0 ? COL_MAIN : COL_ALT, A, lw, ex, ey, ex + (float) Math.cos(ang) * L, ey + dir * (float) Math.sin(ang) * L);
                     }
                 }
                 break;
             }
-            case 2: { // moving-head cones, hard edges
-                int n = new int[] {4, 6, 3}[pat];
+            case 2: { // moving-head cones: two hard edges each
+                int n = new int[] {3, 4, 3}[pat];
                 for (int i = 0; i < n; i++) {
                     float ex = (i + 0.5f) / n * W;
                     double ph = i * 0.9 + (i % 2) * Math.PI;
                     double ang = Math.PI / 2 + Math.sin(2 * Math.PI * bar / (pat == 2 ? 8 : 4) + ph) * 0.5 * spread;
                     float half = 0.035f * (pat == 2 ? 2f : 1f);
-                    float x1 = ex + (float) Math.cos(ang - half) * L, y1 = (float) Math.sin(ang - half) * L;
-                    float x2 = ex + (float) Math.cos(ang + half) * L, y2 = (float) Math.sin(ang + half) * L;
-                    Prim p = poly(i % 2 == 0 ? COL_MAIN : COL_ALT, lvl * 0.13f, 3);
-                    p.poly[0] = ex; p.poly[1] = 0; p.poly[2] = x1; p.poly[3] = y1; p.poly[4] = x2; p.poly[5] = y2;
-                    line(i % 2 == 0 ? COL_MAIN : COL_ALT, lvl * 0.4f, lw, ex, 0, x1, y1);
-                    line(i % 2 == 0 ? COL_MAIN : COL_ALT, lvl * 0.4f, lw, ex, 0, x2, y2);
+                    int c = i % 2 == 0 ? COL_MAIN : COL_ALT;
+                    line(c, A, lw, ex, 0, ex + (float) Math.cos(ang - half) * L, (float) Math.sin(ang - half) * L);
+                    line(c, A, lw, ex, 0, ex + (float) Math.cos(ang + half) * L, (float) Math.sin(ang + half) * L);
                 }
                 break;
             }
-            case 3: { // pillars rising from the stage floor
-                int n = new int[] {7, 9, 5}[pat];
+            case 3: { // pillars rising from the stage floor: solid bars with bright edges
+                int n = new int[] {5, 7, 4}[pat];
                 for (int i = 0; i < n; i++) {
                     float x = (i + 0.5f) / n * W;
                     float breathe = 0.5f + 0.5f * (float) Math.sin(2 * Math.PI * bar / 2 + i * 0.8);
-                    float hgt = H * (0.32f + 0.38f * (0.4f * breathe + 0.6f * Math.min(1f, s.bass * 1.6f)) * spread);
+                    float hgt = H * (0.32f + 0.38f * (0.4f * breathe + 0.6f * Math.min(1f, s.bass * 1.6f)) * spread) * lvl;
                     float hw = 0.0045f * W;
-                    Prim p = poly(i % 2 == 0 ? COL_MAIN : COL_ALT, lvl * 0.2f, 4);
+                    Prim p = poly(i % 2 == 0 ? COL_MAIN : COL_ALT, MAX_ALPHA, 4);
                     p.poly[0] = x - hw; p.poly[1] = H; p.poly[2] = x + hw; p.poly[3] = H; p.poly[4] = x + hw; p.poly[5] = H - hgt; p.poly[6] = x - hw; p.poly[7] = H - hgt;
-                    line(COL_WHITE, lvl * 0.3f, lw, x, H, x, H - hgt);
+                    line(COL_WHITE, A, lw, x - hw, H, x - hw, H - hgt);
+                    line(COL_WHITE, A, lw, x + hw, H, x + hw, H - hgt);
                 }
                 break;
             }
             case 4: { // criss-cross lattice between the top and bottom rigs
-                int n = new int[] {5, 7, 9}[pat];
+                int n = new int[] {4, 5, 6}[pat];
                 float slide = (float) Math.sin(2 * Math.PI * bar / 4) * 0.22f * W * spread;
                 for (int i = 0; i < n; i++) {
                     float x = (i + 0.5f) / n * W;
-                    line(COL_MAIN, lvl * 0.3f, lw, x, 0, x + slide, H);
-                    line(COL_ALT, lvl * 0.3f, lw, x, H, x - slide, 0);
+                    line(COL_MAIN, A, lw, x, 0, x + slide * lvl, H * lvl);
+                    line(COL_ALT, A, lw, x, H, x - slide * lvl, H - H * lvl);
                 }
                 break;
             }
             case 5: { // ring lasers: ellipses opening from the stage on the beat
-                int n = new int[] {4, 6, 8}[pat];
+                int n = new int[] {3, 4, 5}[pat];
                 float cx = 0.5f * W, cy = (pat == 1 ? 0.5f : 0.62f) * H;
                 for (int k = 0; k < n; k++) {
                     float u = (k + s.beatPhase) / n;
-                    float rx = u * 0.62f * W * (0.7f + 0.3f * spread), ry = rx * 0.34f;
-                    ring(k % 2 == 0 ? COL_MAIN : COL_ALT, lvl * 0.42f * (1f - u), lw, cx, cy, rx, ry);
+                    if (u > 0.9f) continue;
+                    float rx = u * 0.62f * W * (0.7f + 0.3f * spread) * lvl, ry = rx * 0.34f;
+                    ring(k % 2 == 0 ? COL_MAIN : COL_ALT, A, lw, cx, cy, rx, ry);
                 }
                 break;
             }
@@ -226,106 +237,41 @@ final class RigGeom {
                     float ex = side == 0 ? 0f : W;
                     double ang = Math.toRadians(55 + 38 * Math.sin(2 * Math.PI * bar / (pat == 0 ? 4 : 8) + side * Math.PI) * spread);
                     float dx = (float) Math.cos(ang) * (side == 0 ? 1 : -1), dy = -(float) Math.sin(ang);
-                    float half = 0.03f;
-                    Prim p = poly(side == 0 ? COL_MAIN : COL_ALT, lvl * 0.12f, 3);
-                    double a1 = ang - half, a2 = ang + half;
-                    p.poly[0] = ex; p.poly[1] = H;
-                    p.poly[2] = ex + (float) Math.cos(a1) * L * (side == 0 ? 1 : -1); p.poly[3] = H - (float) Math.sin(a1) * L;
-                    p.poly[4] = ex + (float) Math.cos(a2) * L * (side == 0 ? 1 : -1); p.poly[5] = H - (float) Math.sin(a2) * L;
-                    line(side == 0 ? COL_MAIN : COL_ALT, lvl * 0.45f, lw, ex, H, ex + dx * L, H + dy * L);
+                    line(side == 0 ? COL_MAIN : COL_ALT, A, lw, ex, H, ex + dx * L, H + dy * L);
                 }
                 break;
             }
             case 7: { // crossed fans from both bottom corners
-                int n = new int[] {5, 7, 9}[pat];
+                int n = new int[] {4, 5, 6}[pat];
                 for (int side = 0; side < 2; side++) {
                     float ex = side == 0 ? 0.04f * W : 0.96f * W;
                     for (int i = 0; i < n; i++) {
                         double u = (i / (double) (n - 1)) * 2 - 1;
                         double ang = Math.toRadians(62 + u * 30 * spread + 10 * Math.sin(2 * Math.PI * bar / 8 + side * Math.PI));
                         float dir = side == 0 ? 1 : -1;
-                        line(side == 0 ? COL_MAIN : COL_ALT, lvl * 0.3f, lw, ex, H, ex + dir * (float) Math.cos(ang) * L, H - (float) Math.sin(ang) * L);
+                        line(side == 0 ? COL_MAIN : COL_ALT, A, lw, ex, H, ex + dir * (float) Math.cos(ang) * L, H - (float) Math.sin(ang) * L);
                     }
                 }
                 break;
             }
-            default: { // 8 curtain: slanted parallel lines drifting across
-                int n = new int[] {14, 18, 22}[pat];
+            default: { // 8 curtain: a few slanted parallel lines drifting across
+                int n = new int[] {6, 8, 10}[pat];
                 float slant = 0.35f * H;
                 for (int i = 0; i < n; i++) {
                     float u = (float) (((i / (double) n) + bar * (pat == 0 ? 0.25 : 0.5)) % 1.0);
                     float x = u * 1.5f * W - 0.25f * W;
-                    float aMod = 0.5f + 0.5f * (float) Math.sin(i * 1.3 + bar * 1.6);
-                    line(i % 2 == 0 ? COL_MAIN : COL_ALT, lvl * (0.18f + 0.18f * aMod), lw, x, 0, x - slant, H);
+                    line(i % 2 == 0 ? COL_MAIN : COL_ALT, A, lw, x, 0, x - slant * lvl, H * lvl);
                 }
             }
         }
     }
 
-    // ---------------- foreground: lights and particles only, nothing human ----------------
+    // ---------------- foreground: particles only (no stage-light strips, no faint lines), nothing human ----------------
 
     private void fg(int type, In s, float density) {
         float t = s.t, mt = s.mt;
         switch (type) {
-            case 0: { // edge: light strips along the stage edges, with ticks running along them on the bar clock
-                float a = 0.30f + 0.16f * s.kickEnv;
-                line(COL_MAIN, a, lw * 1.6f, 0, 0.992f * H, W, 0.992f * H);
-                line(COL_ALT, a * 0.8f, lw * 1.4f, 0.006f * W, 0, 0.006f * W, H);
-                line(COL_ALT, a * 0.8f, lw * 1.4f, 0.994f * W, 0, 0.994f * W, H);
-                float run = (float) (s.barPos * 2 % 1.0);
-                for (int i = 0; i < 36; i++) {
-                    float x = ((i + run) / 36f) * W;
-                    line(COL_WHITE, 0.30f, lw, x, 0.992f * H - 0.014f * H, x, 0.992f * H);
-                }
-                for (int i = 0; i < 14; i++) {
-                    float y = ((i + run) / 14f) * H;
-                    line(COL_WHITE, 0.24f, lw, 0.006f * W, y, 0.006f * W + 0.012f * W, y);
-                    line(COL_WHITE, 0.24f, lw, 0.994f * W, y, 0.994f * W - 0.012f * W, y);
-                }
-                break;
-            }
-            case 1: { // truss: a dark bar across the top with zig-zag struts and a row of lights
-                float y = 0.04f * H;
-                line(COL_SHADE, 0.9f, 0.01f * H, 0, y, W, y);
-                int n = 22;
-                for (int i = 0; i < n; i++) {
-                    float x0 = i / (float) n * W, x1 = (i + 1) / (float) n * W;
-                    line(COL_SHADE, 0.85f, 3f, x0, i % 2 == 0 ? 0 : y, x1, i % 2 == 0 ? y : 0);
-                    float pulse = 0.5f + 0.5f * (float) Math.sin(2 * Math.PI * s.barPos / 2 + i * 0.5);
-                    dot(i % 2 == 0 ? COL_MAIN : COL_ALT, 0.28f + 0.22f * pulse, (i + 0.5f) / n * W, y + 0.014f * H, 0.004f * H);
-                }
-                break;
-            }
-            case 2: { // haze: long streaks of light with hard edges, drifting sideways at different heights
-                for (int i = 0; i < 7; i++) {
-                    float len = W * (0.30f + 0.3f * h(i, 70));
-                    float y = H * (0.50f + 0.42f * h(i, 71));
-                    float th = H * (0.004f + 0.006f * h(i, 72));
-                    float x = (float) (((h(i, 73) + mt * (0.012 + 0.02 * h(i, 74)) * (i % 2 == 0 ? 1 : -1)) % 1.4 + 1.4) % 1.4) * W - 0.2f * W;
-                    float slant = 0.012f * H;
-                    Prim p = poly(i % 2 == 0 ? COL_MAIN : COL_ALT, 0.07f + 0.07f * Math.min(1f, s.ener * 1.5f), 4);
-                    p.poly[0] = x; p.poly[1] = y; p.poly[2] = x + len; p.poly[3] = y - slant;
-                    p.poly[4] = x + len; p.poly[5] = y - slant + th; p.poly[6] = x; p.poly[7] = y + th;
-                }
-                break;
-            }
-            case 3: { // floor: a perspective grid and the reflections of the stage lights standing on it
-                float vy = 0.74f * H, vx = 0.5f * W;
-                int k = 7;
-                for (int i = 0; i < k; i++) {
-                    float u = (float) (((i + (s.barPos * 2) % 1.0) / k) % 1.0);
-                    float y = vy + (H - vy) * u * u;
-                    line(COL_MAIN, 0.12f + 0.12f * u, lw, 0, y, W, y);
-                }
-                for (int i = -6; i <= 6; i++) line(COL_ALT, 0.14f, lw, vx + i * 0.02f * W, vy, vx + i * 0.2f * W, H);
-                for (int i = 0; i < 9; i++) {
-                    float x = (i + 0.5f) / 9f * W;
-                    float sh = 0.5f + 0.5f * (float) Math.sin(2 * Math.PI * s.barPos / 2 + i * 0.9);
-                    line(COL_WHITE, 0.08f + 0.12f * Math.min(1f, s.bass * 1.5f) * sh, lw, x, vy + 0.03f * H, x + (h(i, 75) - 0.5f) * 0.04f * W, H);
-                }
-                break;
-            }
-            case 4: { // rise: four particle fountains climbing from the floor, higher on the bass
+            case 0: { // rise: four particle fountains climbing from the floor, higher on the bass
                 int n = 8 + (int) (10 * density);
                 for (int e = 0; e < 4; e++) {
                     float x0 = (0.2f + 0.2f * e) * W;
@@ -333,15 +279,12 @@ final class RigGeom {
                         float u = (float) ((mt * 0.45 + h(i, 80 + e) * 1.0) % 1.0);
                         float rise = H * (0.28f + 0.30f * Math.min(1f, s.bass * 1.6f)) * u;
                         float x = x0 + (h(i, 84 + e) - 0.5f) * 0.07f * W * u + 0.006f * W * (float) Math.sin(mt * 2 + i);
-                        float y = H - rise;
-                        float a = 0.5f * (1f - u);
-                        line(e % 2 == 0 ? COL_WHITE : COL_ALT, a, lw, x, y, x, y + 0.02f * H);
-                        dot(COL_WHITE, a * 0.7f, x, y, 0.0028f * H);
+                        dot(e % 2 == 0 ? COL_WHITE : COL_ALT, 0.5f * (1f - u), x, H - rise, 0.0032f * H);
                     }
                 }
                 break;
             }
-            case 5: { // motes: near drifting dust (bigger, slower) and a few sparks floating upward
+            case 1: { // motes: near drifting dust (bigger, slower) and a few sparks floating upward
                 for (int i = 0; i < 26; i++) {
                     float depth = 0.4f + 0.6f * h(i, 90);
                     float x = (float) ((h(i, 91) + mt * 0.010 * depth) % 1.0) * W;
@@ -350,22 +293,14 @@ final class RigGeom {
                 }
                 for (int i = 0; i < 10; i++) {
                     float u = (float) ((mt * 0.3 + h(i, 93)) % 1.0);
-                    float x = h(i, 94) * W + 0.01f * W * (float) Math.sin(t + i), y = H * (1.0f - u);
-                    line(COL_ALT, 0.40f * (1f - u), lw, x, y, x, y + 0.025f * H);
+                    dot(COL_ALT, 0.40f * (1f - u), h(i, 94) * W + 0.01f * W * (float) Math.sin(t + i), H * (1.0f - u), 0.003f * H);
                 }
                 break;
             }
-            default: { // 6 rail: an LED strip along the stage edge with ticks that glide
-                float y = 0.985f * H;
-                float a = 0.3f + 0.18f * s.kickEnv;
-                line(COL_MAIN, a, lw * 1.5f, 0, y, W, y);
-                for (int i = 0; i < 40; i++) {
-                    float x = ((i + (float) (s.barPos * 4 % 1.0)) / 40f) * W;
-                    line(COL_ALT, 0.25f, lw, x, y - 0.012f * H, x, y);
-                }
-            }
+            default: // none: the backdrop scene carries the look
         }
     }
+
     // ---------------- accents ----------------
 
     /** which sections an accent plays in: intro and breakdown strip back to dust, an outro fades everything else out */
@@ -398,8 +333,11 @@ final class RigGeom {
                         float x = x0 + vx * life, y = H - (vy * life - 0.5f * H * 0.95f * life * life);
                         // a crisp trail (about 6% of a second of flight), warm white at the head, alt colour behind
                         float tx = x - vx * 0.06f, ty = y + (vy - H * 0.95f * life) * 0.06f;
-                        line(COL_WHITE, 0.55f * (1f - life), lw * 1.3f, x, y, (x + tx) / 2, (y + ty) / 2);
-                        line(COL_ALT, 0.5f * (1f - life), lw, (x + tx) / 2, (y + ty) / 2, tx, ty);
+                        if (life < 0.55f) { // a solid trail while the spark is fast, then just its head
+                            line(COL_WHITE, 0.65f, lw * 1.3f, x, y, (x + tx) / 2, (y + ty) / 2);
+                            line(COL_ALT, 0.65f, lw, (x + tx) / 2, (y + ty) / 2, tx, ty);
+                        }
+                        dot(COL_WHITE, 0.55f * (1f - life), x, y, 0.003f * H);
                     }
                 }
                 break;
@@ -420,21 +358,21 @@ final class RigGeom {
                 boolean left = ((int) (s.lastSnareT * 10)) % 2 == 0;
                 float cx = (left ? 0.3f : 0.7f) * W, cy = 0.78f * H;
                 float u = since / 0.4f;
+                if (u > 0.7f) break; // solid short rays, then gone: no fading strokes
                 for (int i = 0; i < 12; i++) {
                     double ang = Math.PI * (0.15 + 0.7 * h(i, 50));
                     float r1 = (0.02f + 0.1f * u) * H * (0.6f + h(i, 51)), r0 = r1 * 0.55f;
-                    line(COL_WHITE, 0.5f * (1f - u), lw, cx + (float) Math.cos(ang) * r0, cy - (float) Math.sin(ang) * r0, cx + (float) Math.cos(ang) * r1, cy - (float) Math.sin(ang) * r1);
+                    line(COL_WHITE, 0.65f, lw, cx + (float) Math.cos(ang) * r0, cy - (float) Math.sin(ang) * r0, cx + (float) Math.cos(ang) * r1, cy - (float) Math.sin(ang) * r1);
                 }
                 break;
             }
-            case 3: { // riser lines through a build: faster and tighter as it goes
+            case 3: { // risers through a build: points climbing, faster and more of them as it goes
                 if (s.kind != Director.BUILD) break;
-                int n = 8 + (int) (12 * s.kindProgress);
+                int n = 10 + (int) (24 * s.kindProgress);
                 float speed = 0.12f + 0.6f * s.kindProgress * s.kindProgress;
                 for (int i = 0; i < n; i++) {
-                    float u = (float) (((i / (double) n) + mt * speed) % 1.0);
-                    float y = H * (1f - u);
-                    line(COL_MAIN, 0.14f + 0.2f * s.kindProgress, lw, 0.1f * W, y, 0.9f * W, y);
+                    float u = (float) (((h(i, 95) * 0.5) + mt * speed * (0.6 + 0.8 * h(i, 96))) % 1.0);
+                    dot(COL_WHITE, 0.55f, (0.08f + 0.84f * h(i, 97)) * W, H * (1f - u), 0.0035f * H);
                 }
                 break;
             }
@@ -442,9 +380,9 @@ final class RigGeom {
                 float since = t - s.lastKickT, since2 = t - s.prevKickT;
                 for (int k = 0; k < 2; k++) {
                     float d = k == 0 ? since : since2;
-                    if (d < 0 || d > 1.1f) continue;
+                    if (d < 0 || d > 0.8f) continue; // a solid ring that leaves, not a fading one
                     float r = d * 0.9f * H;
-                    ring(COL_ALT, 0.38f * (1f - d / 1.1f), lw, 0.5f * W, 0.75f * H, r * 1.6f, r * 0.6f);
+                    ring(COL_ALT, 0.62f, lw, 0.5f * W, 0.75f * H, r * 1.6f, r * 0.6f);
                 }
                 break;
             }

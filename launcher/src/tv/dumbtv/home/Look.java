@@ -11,7 +11,7 @@ final class Look {
         "synth_road", "hyperspace", "night_ocean", "city_drive", "crystal_tunnel", "dot_sheet", "lanterns",
         "firefly_meadow", "sunset_rays", "vortex", "underwater_night", "torus_knot"};
     static final String[] BEAMS = {"none", "fan", "heads", "pillars", "lattice", "rings", "wipers", "cross", "curtain"};
-    static final String[] FGS = {"edge", "truss", "haze", "floor", "rise", "motes", "rail"}; // all non-human
+    static final String[] FGS = {"rise", "motes", "none"}; // particles only: the strip, truss, haze, floor and rail lines were removed
     static final String[] ACCENTS = {"fountain", "confetti", "sparks", "risers", "shock", "dust"};
     static final String[] CAMS = {"push", "drift", "tilt", "wide"};
     static final int LAYERS = 5;

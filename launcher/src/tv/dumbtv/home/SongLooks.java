@@ -244,18 +244,18 @@ final class SongLooks {
     }
 
     static {
-        fam("monumental geometry", s("torus_knot", "crystal_tunnel", "plexus"), s("lattice", "pillars"), s("truss", "edge"), null, null);
-        fam("pillars", s("crystal_tunnel", "city_drive"), s("pillars"), s("truss"), null, null);
+        fam("monumental geometry", s("torus_knot", "crystal_tunnel", "plexus"), s("lattice", "pillars"), null, null, null);
+        fam("pillars", s("crystal_tunnel", "city_drive"), s("pillars"), null, null, null);
         fam("slow wide beams", null, s("fan", "curtain", "cross"), null, null, s("wide", "drift"));
         fam("ring shockwaves", null, s("rings"), null, s("shock"), null);
         fam("tunnel", s("tunnel", "hyperspace", "crystal_tunnel", "vortex"), null, null, null, null);
         fam("lattice", s("plexus"), s("lattice"), null, null, null);
         fam("sweeping beams", null, s("heads", "wipers", "fan", "cross"), null, null, null);
-        fam("low beams", null, s("wipers", "fan"), s("floor", "rail"), null, null);
+        fam("low beams", null, s("wipers", "fan"), null, null, null);
         fam("call-response beams", null, s("cross", "heads", "curtain", "fan"), null, null, null);
         fam("city", s("city_drive", "synth_road"), null, null, null, null);
-        fam("synthwave", s("synth_road", "city_drive"), null, s("floor"), null, null);
-        fam("golden hour", s("sunset_rays", "dunes", "firefly_meadow"), null, s("haze", "motes"), null, null);
+        fam("synthwave", s("synth_road", "city_drive"), null, null, null, null);
+        fam("golden hour", s("sunset_rays", "dunes", "firefly_meadow"), null, s("motes"), null, null);
         fam("galaxy", s("galaxy", "hyperspace"), null, null, null, null);
         fam("ocean", s("night_ocean", "underwater_night"), null, null, null, null);
         fam("aurora", s("aurora_ridge"), null, null, null, null);
@@ -268,6 +268,14 @@ final class SongLooks {
         fam("lanterns", s("lanterns"), null, null, null, null);
         fam("hyperspace", s("hyperspace"), null, null, null, null);
         fam("dust", null, null, null, s("dust", "risers"), null);
+    }
+
+    private static final String[] BEAM_FAMILIES = {"pillars", "slow wide beams", "ring shockwaves", "lattice", "sweeping beams", "low beams", "call-response beams"};
+
+    /** true if the entry lists a stage-beam family as preferred: its song may have beams on both drops and choruses, without the 12 s cap */
+    static boolean prefersBeams(Entry e) {
+        for (String f : e.families) for (String b : BEAM_FAMILIES) if (b.equals(f)) return true;
+        return false;
     }
 
     /** Backdrops too soft for a heavy or regal look: marked unfit for entries with motion=heavy (they stay in the pool for others). */

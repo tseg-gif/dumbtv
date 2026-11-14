@@ -53,6 +53,9 @@ final class Rig extends View {
     private float featN, featEner, featBright, featTonal;
     private boolean derived;
     private static final long DERIVE_AFTER_MS = 25000;
+    private Look beamLook;                 // the look whose beam episode is being timed
+    private float beamStartT = -1f;
+    private boolean beamSpent;
 
     Rig(Context c, Pulse p, Glow g) {
         super(c);
@@ -306,6 +309,21 @@ final class Rig extends View {
             if (glow.pin(name, var, 3600) != null) pinOn = true;
         }
         in.kind = director.kind();
+        // a beam episode: starts when this look has beams and the section is a drop or chorus; capped at 12 s per look (not for entries that prefer beams)
+        if (look != beamLook) {
+            beamLook = look;
+            beamStartT = -1f;
+            beamSpent = false;
+        }
+        in.beamsFree = director.beamsFree();
+        if (look.beam != 0 && !beamSpent && (in.kind == Director.DROP || in.kind == Director.CHORUS)) {
+            if (beamStartT < 0f) beamStartT = t;
+            in.beamAge = t - beamStartT;
+            if (!in.beamsFree && in.beamAge > RigGeom.BEAM_MAX_S + 1f) beamSpent = true;
+        } else {
+            in.beamAge = 0f;
+            beamStartT = -1f;
+        }
         in.kindProgress = director.kindProgress(now);
         in.lookAge = director.lookAgeMs(now) / 1000f;
         in.dropT = director.dropAt() < 0 ? -99f : (director.dropAt() - epoch) / 1000f;

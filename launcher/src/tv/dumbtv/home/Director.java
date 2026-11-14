@@ -86,40 +86,40 @@ final class Director {
             case "hiphop":
                 return new int[][] {ids(B, "tunnel", "city_drive", "plexus", "vortex", "crystal_tunnel", "galaxy", "synth_road"),
                     ids(M, "fan", "heads", "lattice", "wipers", "cross", "curtain", "pillars"),
-                    ids(F, "edge", "truss", "haze", "rail", "rise"), ids(A, "sparks", "shock", "fountain", "risers", "dust"), allCam};
+                    ids(F, "none", "rise"), ids(A, "sparks", "shock", "fountain", "risers", "dust"), allCam};
             case "edm":
                 return new int[][] {ids(B, "tunnel", "mandala_bloom", "hyperspace", "crystal_tunnel", "vortex", "plexus", "synth_road"),
                     ids(M, "fan", "lattice", "rings", "curtain", "cross", "heads", "pillars", "wipers"),
-                    ids(F, "floor", "truss", "rise", "haze", "edge"), ids(A, "fountain", "risers", "shock", "confetti", "sparks"), allCam};
+                    ids(F, "none", "rise"), ids(A, "fountain", "risers", "shock", "confetti", "sparks"), allCam};
             case "rock":
                 return new int[][] {ids(B, "city_drive", "vortex", "galaxy", "tunnel", "plexus", "sunset_rays"),
                     ids(M, "heads", "wipers", "fan", "cross", "pillars", "curtain"),
-                    ids(F, "truss", "edge", "haze", "rail", "rise"), ids(A, "sparks", "fountain", "shock", "risers"), allCam};
+                    ids(F, "none", "rise"), ids(A, "sparks", "fountain", "shock", "risers"), allCam};
             case "country":
                 return new int[][] {ids(B, "firefly_meadow", "sunset_rays", "dunes", "aurora_ridge", "lanterns", "night_ocean"),
                     ids(M, "none", "wipers", "pillars", "fan"),
-                    ids(F, "motes", "haze", "rail", "edge"), ids(A, "dust", "risers", "shock", "sparks"), allCam};
+                    ids(F, "none", "motes"), ids(A, "dust", "risers", "shock", "sparks"), allCam};
             case "rnb":
                 return new int[][] {ids(B, "dot_sheet", "sunset_rays", "night_ocean", "aurora_ridge", "lanterns", "synth_road", "underwater_night"),
                     ids(M, "none", "pillars", "wipers", "fan"),
-                    ids(F, "floor", "rail", "haze", "motes"), ids(A, "dust", "risers", "shock", "sparks"), allCam};
+                    ids(F, "none", "motes"), ids(A, "dust", "risers", "shock", "sparks"), allCam};
             case "piano":
                 return new int[][] {ids(B, "aurora_ridge", "galaxy", "night_ocean", "dunes", "lanterns", "firefly_meadow", "torus_knot"),
                     ids(M, "none", "pillars", "wipers", "fan"),
-                    ids(F, "floor", "rail", "motes", "haze"), ids(A, "dust", "risers", "shock", "sparks"), allCam};
+                    ids(F, "none", "motes"), ids(A, "dust", "risers", "shock", "sparks"), allCam};
             case "sad":
                 return new int[][] {ids(B, "rain", "night_ocean", "underwater_night", "aurora_ridge", "dunes", "galaxy"),
                     ids(M, "none", "pillars", "wipers", "fan"),
-                    ids(F, "floor", "rail", "haze", "motes"), ids(A, "dust", "risers", "shock", "sparks"),
+                    ids(F, "none", "motes"), ids(A, "dust", "risers", "shock", "sparks"),
                     ids(C, "wide", "drift", "tilt", "push")};
             case "afro":
                 return new int[][] {ids(B, "sunset_rays", "mandala_bloom", "lanterns", "city_drive", "firefly_meadow", "synth_road", "dot_sheet"),
                     ids(M, "fan", "heads", "curtain", "cross", "rings", "wipers"),
-                    ids(F, "rise", "floor", "truss", "edge", "haze"), ids(A, "confetti", "sparks", "shock", "fountain", "risers"), allCam};
+                    ids(F, "none", "rise"), ids(A, "confetti", "sparks", "shock", "fountain", "risers"), allCam};
             default: // pop
                 return new int[][] {ids(B, "sunset_rays", "synth_road", "mandala_bloom", "aurora_ridge", "city_drive", "dot_sheet", "lanterns", "galaxy"),
                     ids(M, "fan", "heads", "rings", "cross", "curtain", "wipers"),
-                    ids(F, "edge", "rise", "truss", "rail", "floor"), ids(A, "confetti", "shock", "sparks", "fountain", "risers"), allCam};
+                    ids(F, "none", "rise", "motes"), ids(A, "confetti", "shock", "sparks", "fountain", "risers"), allCam};
         }
     }
 
@@ -135,8 +135,9 @@ final class Director {
                 return 1f;
             case 2:
                 n = Look.FGS[value];
-                if (k == DROP || k == CHORUS) return "rise".equals(n) || "edge".equals(n) || "truss".equals(n) ? 2f : 1f;
-                if (k == INTRO || k == BREAK) return "rail".equals(n) || "floor".equals(n) || "haze".equals(n) || "motes".equals(n) ? 1.8f : 0.8f;
+                if ("none".equals(n)) return 3f; // most looks: no foreground layer, the backdrop scene carries it
+                if (k == DROP || k == CHORUS) return "rise".equals(n) ? 1.5f : 0.6f;
+                if (k == INTRO || k == BREAK) return "motes".equals(n) ? 1.8f : 0.5f;
                 return 1f;
             case 3:
                 n = Look.ACCENTS[value];
@@ -214,7 +215,18 @@ final class Director {
                 int[] allowed = layer == 0 ? ALL_BACKDROPS : prof[layer];
                 if (entry != null && layer > 0) allowed = withPreferred(allowed, layer);
                 if (entry != null) allowed = withoutAvoided(allowed, layer);
-                int nWin = layer == 0 ? 6 : 3;
+                if (layer == 1) { // beams are rare: only on a drop or chorus, never twice in a row, and most songs get none
+                    if (!beamAllowed(k, window)) {
+                        v[1] = 0;
+                        continue;
+                    }
+                    allowed = withoutNone(allowed);
+                    if (allowed.length == 0) {
+                        v[1] = 0;
+                        continue;
+                    }
+                }
+                int nWin = layer == 0 ? 6 : layer == 2 ? 0 : 3; // the foreground has only a few values and "none" repeats freely
                 ArrayList<Integer> cands = new ArrayList<>();
                 for (int a : allowed) if (!inLast(window, layer, a, nWin)) cands.add(a);
                 if (cands.isEmpty()) { // nothing outside the window: avoid at least the previous one
@@ -261,6 +273,34 @@ final class Director {
             if (seen == null || now - seen > SIG_BLOCK_MS) break;
         }
         return best;
+    }
+
+    private int[] withoutNone(int[] base) {
+        int n = 0;
+        for (int a : base) if (a != 0) n++;
+        int[] r = new int[n];
+        int i = 0;
+        for (int a : base) if (a != 0) r[i++] = a;
+        return r;
+    }
+
+    /**
+     * The beam layer is an accent. Allowed only in a drop or chorus look, never right after a look that had beams, and (for
+     * songs whose entry does not prefer beams) not if any of the last 6 looks had them: at most one look in six, about 10% overall.
+     * A song entry that lists a beam family as preferred always gets them on the drop and half the time on a chorus.
+     */
+    private boolean beamAllowed(int k, List<Look> window) {
+        if (k != DROP && k != CHORUS) return false;
+        if (!window.isEmpty() && window.get(window.size() - 1).beam != 0) return false;
+        boolean explicit = entry != null && SongLooks.prefersBeams(entry);
+        if (!explicit) {
+            for (int i = Math.max(0, window.size() - 6); i < window.size(); i++) if (window.get(i).beam != 0) return false;
+        }
+        return rnd.nextFloat() < (explicit ? (k == DROP ? 0.8f : 0.4f) : 0.4f);
+    }
+
+    boolean beamsFree() {
+        return entry != null && SongLooks.prefersBeams(entry);
     }
 
     private int[] withPreferred(int[] base, int layer) {
