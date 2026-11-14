@@ -26,6 +26,8 @@ import java.util.Arrays;
 final class Tempo {
     private static final int N = 400; // 8 s at the meter's 40 points a second
     private static final long WINDOW_MS = 8000, MIN_MS = 6000, EVERY_MS = 500;
+    /** Kicks heard in the last 20 s that count as a drum track, so a slow tempo may be read as every other beat. */
+    static int OCTAVE_KICKS = 12;
 
     private final float[][] env = new float[3][N]; // bass, mid, high
     private final long[] et = new long[N];
@@ -40,6 +42,7 @@ final class Tempo {
     private final float[] pos = new float[4];
     private int downbeat;
     private boolean half;
+    private boolean octaveHeld;
     private static final int KN = 48;
     private final long[] kt = new long[KN];
     private final float[] kw = new float[KN];
@@ -60,6 +63,7 @@ final class Tempo {
         kHead = kCount = 0;
         lastFit = 0;
         kickConf = kickBpm = 0;
+        octaveHeld = false;
     }
 
     /** One onset-envelope point per audio callback: positive spectral change in three bands. */
@@ -74,6 +78,15 @@ final class Tempo {
             lastEval = now;
             evaluate(now);
         }
+    }
+
+    private int recentKicks(long now) {
+        int n = 0;
+        for (int k = 0; k < kCount; k++) {
+            if (now - kt[(kHead - 1 - k + KN * 2) % KN] > 20000) break;
+            n++;
+        }
+        return n;
     }
 
     private void evaluate(long now) {
@@ -161,6 +174,24 @@ final class Tempo {
                     && (bestHalf < 0 || rhoBass[h] > rhoBass[bestHalf])) bestHalf = h;
         }
         if (bestHalf > 0) bestLag = bestLag / 2;
+        // Octave resolver (prefers 80..160 BPM): a tempo under 80 is doubled when the combined onset envelope
+        // repeats at half that lag nearly as strongly (a backbeat's kick and snare each mark one real beat, so the
+        // slow tempo is only every other beat) and the double stays at or under 165. A ballad whose notes land only
+        // on the slow beat has no such support and keeps its tempo.
+        if (bestLag > 0 && 60.0 * rate / bestLag < 80.0 && 60.0 * rate / (bestLag / 2) <= 165.0 && recentKicks(now) >= OCTAVE_KICKS) {
+            bestLag = bestLag / 2;
+            octaveHeld = true;
+        }
+        // Once doubled, stay doubled through a breakdown or outro: with the drums gone the slow lag wins again, but
+        // it is the same song at the same tempo (found with the synthetic rock track: right until the drums stopped).
+        if (octaveHeld && bestLag > 0 && bpm >= 80f) {
+            for (int k = 2; k <= 4; k *= 2) { // a half or a quarter of the held tempo is a bar or two beats of it
+                if (Math.abs(60.0 * rate / bestLag * k - bpm) < bpm * 0.05f) {
+                    bestLag /= k;
+                    break;
+                }
+            }
+        }
         if (bestLag <= 0) {
             conf = 0;
             return;
@@ -226,7 +257,10 @@ final class Tempo {
         return v * v;
     }
 
+    static boolean DEBUG_SET;
+
     private void setTempo(float b, long now) {
+        if (DEBUG_SET) System.out.println("    setTempo " + b + " at " + now + " held=" + octaveHeld + " kicks=" + recentKicks(now) + " kickConf=" + kickConf);
         if (anchor != 0) {
             // keep the grid where it is while the period changes: re-anchor on the last beat at or before now.
             // (The nearest beat can lie ahead of now: the clamp in rawBeats then swallowed the next beat and the index
@@ -236,6 +270,13 @@ final class Tempo {
             beatBase += (long) k;
         }
         if (bpm != 0 && Math.abs(b - bpm) > bpm * 0.05f) freqErr = 0;
+        if (bpm != 0 && b >= 80f) {
+            // a tempo that doubles (by the resolver or the bass-repeat rule) is held through a drum-less breakdown;
+            // a change to an unrelated tempo lets go
+            float r = b / bpm;
+            if (Math.abs(r - 2f) < 0.12f) octaveHeld = true;
+            else if (Math.abs(r - 1f) > 0.05f && Math.abs(r - 0.5f) > 0.05f) octaveHeld = false;
+        }
         bpm = b;
         basePeriod = 60000.0 / b;
         period = basePeriod * (1 + freqErr);
@@ -314,7 +355,9 @@ final class Tempo {
                 im += w[i] * Math.sin(a);
             }
             double r = Math.hypot(re, im) / wsum;
-            double sc = r * Math.pow(prior((float) b), 0.5);
+            // octave tie-break: kicks every other beat fit the half tempo as well as the real one, and kick times
+            // that jitter by a frame fit the slow lattice a little better, so the 80..165 range gets a bonus
+            double sc = r * Math.pow(prior((float) b), 0.5) * (b >= 80 && b <= 165 ? 1.12 : 0.9);
             if (sc > bestScore) {
                 bestScore = sc;
                 bestR = r;
@@ -359,6 +402,15 @@ final class Tempo {
 
     private boolean eff() {
         return half && bpm >= 110f;
+    }
+
+    /** the tracked tempo before any half-time counting */
+    synchronized float rawBpm() {
+        return bpm;
+    }
+
+    synchronized boolean halfTime() {
+        return half;
     }
 
     synchronized float bpm() {

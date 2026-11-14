@@ -140,6 +140,9 @@ final class Config {
     /** One line about the song from Wikipedia when it starts (uses the internet). */
     static final Choice REACT_FACTS = new Choice("react_facts", "Song fact captions", "off",
             new String[] {"off", "on"}, new String[] {"Off", "On"});
+    /** Human figures in the visuals (the singer silhouette, the Beat It dancer). Off: only shapes, lights and particles. */
+    static final Choice SHOW_PEOPLE = new Choice("show_people", "Show people", "off",
+            new String[] {"off", "on"}, new String[] {"Off", "On"});
     static final Choice REACT_COLOR = new Choice("react_color", "Visualizer colors", "soft",
             new String[] {"soft", "vivid", "accent"},
             new String[] {"Soft (easy on the eyes)", "Vivid", "Accent only"});
@@ -157,7 +160,7 @@ final class Config {
     static final Choice SCROLL_SOUND = new Choice("scroll_sound", "Scroll sound", "tune",
             new String[] {"tune", "pop", "boing", "bloop", "arcade", "bongo", "notes", "glass", "marimba", "kalimba", "bubble", "synth", "buzz", "off"},
             new String[] {"Melody", "Pop", "Boing", "Bloop", "Arcade", "Bongo", "Harmony chimes", "Glass pluck", "Marimba", "Kalimba", "Water drops", "Synth arpeggio", "Buzz", "Off"});
-    static final Choice[] CHOICES = {ACCENT, TILES, LAYOUT, ORDER, LABELS, CLOCK, MEMORY, INPUTS, SWITCH, BACKGROUND, DIM, ROTATE, LOCK, TILE_STYLE, QUICK, VPN_CHIP, REACT, REACT_STYLE, REACT_SPEAKERS, SCROLL_SOUND, REACT_COLOR, REACT_CINEMA, PIANO_PALETTE, PIANO_DIM, REACT_ORIGIN, REACT_FACTS, MUSIC_MODE};
+    static final Choice[] CHOICES = {ACCENT, TILES, LAYOUT, ORDER, LABELS, CLOCK, MEMORY, INPUTS, SWITCH, BACKGROUND, DIM, ROTATE, LOCK, TILE_STYLE, QUICK, VPN_CHIP, REACT, REACT_STYLE, REACT_SPEAKERS, SCROLL_SOUND, REACT_COLOR, REACT_CINEMA, PIANO_PALETTE, PIANO_DIM, REACT_ORIGIN, REACT_FACTS, SHOW_PEOPLE, MUSIC_MODE};
 
     /** Folder of wallpapers, next to home.conf, that Background › Image file rotates through. */
     static final String WALLPAPERS = "wallpapers";

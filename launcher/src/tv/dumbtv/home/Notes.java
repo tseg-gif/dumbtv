@@ -34,6 +34,12 @@ final class Notes {
     private final int[] cand = new int[MAX + 1];
     private final float[] candM = new float[MAX + 1], candF = new float[MAX + 1];
     private float ref = 20f, tonal, stable;
+
+    /** smoothed tonal ratio 0..1 (low spectral flatness) */
+    float tonalNow() {
+        return tonal;
+    }
+
     private long lastFrame, lastLog;
     private int logOn, logLow;
     private boolean debug;

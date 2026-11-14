@@ -33,7 +33,7 @@ final class Variety {
 
     static final String[] PACKS = {"money", "love", "street", "party", "grief", "faith", "ocean", "fire",
         "city", "space"};
-    static final int[] PACK_N = {6, 4, 4, 4, 4, 4, 4, 4, 5, 4};
+    static final int[] PACK_N = {6, 4, 4, 3, 4, 4, 4, 4, 5, 4}; // party: 3 (the crowd scene was removed)
     /** Scene ids are pack * 8 + index; this one is the camera route through the artist's city. */
     static final int JOURNEY = 80;
     /** 0 calm, 1 medium, 2 high: how much energy each scene wants. */

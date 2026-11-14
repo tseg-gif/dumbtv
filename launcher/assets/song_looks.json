@@ -1,0 +1,275 @@
+{
+  "version": 1,
+  "entries": {
+    "kanye west - power": {
+      "source": "user",
+      "mood": [
+        "epic",
+        "regal",
+        "aggressive"
+      ],
+      "energy": 0.85,
+      "valence": 0.3,
+      "tempo_hint": 77,
+      "families": [
+        "monumental geometry",
+        "pillars",
+        "slow wide beams",
+        "ring shockwaves",
+        "tunnel"
+      ],
+      "avoid": [
+        "pastel/soft",
+        "rain",
+        "aurora",
+        "dot-sheet",
+        "fast confetti"
+      ],
+      "palette": {
+        "hues": [
+          45,
+          355
+        ],
+        "sat_cap": 0.6,
+        "dark": true
+      },
+      "motion": "heavy",
+      "kick": "punch",
+      "notes": "imperial, heavy, slow big hits, dark with gold"
+    },
+    "kanye west - through the wire": {
+      "source": "model",
+      "mood": [
+        "triumphant",
+        "soulful",
+        "resilient"
+      ],
+      "energy": 0.6,
+      "valence": 0.5,
+      "tempo_hint": null,
+      "families": [
+        "golden hour",
+        "slow wide beams",
+        "low beams",
+        "lanterns"
+      ],
+      "avoid": [
+        "fast confetti",
+        "lattice",
+        "hyperspace"
+      ],
+      "palette": {
+        "hues": [
+          32,
+          345
+        ],
+        "sat_cap": 0.55
+      },
+      "motion": "flowing",
+      "kick": "bloom",
+      "notes": "warm chipmunk-soul, rising and human, amber with rose"
+    },
+    "bigxthaplug - the largest": {
+      "source": "model",
+      "mood": [
+        "menacing",
+        "heavy",
+        "dominant"
+      ],
+      "energy": 0.8,
+      "valence": 0.35,
+      "tempo_hint": null,
+      "families": [
+        "tunnel",
+        "pillars",
+        "city",
+        "slow wide beams",
+        "monumental geometry"
+      ],
+      "avoid": [
+        "pastel/soft",
+        "rain",
+        "aurora",
+        "dot-sheet",
+        "fast confetti"
+      ],
+      "palette": {
+        "hues": [
+          215,
+          355
+        ],
+        "sat_cap": 0.55,
+        "dark": true
+      },
+      "motion": "heavy",
+      "kick": "punch",
+      "notes": "deep-voiced Texas trap, dark steel with red, big slow hits"
+    },
+    "bigxthaplug - mmhmm": {
+      "source": "model",
+      "mood": [
+        "swagger",
+        "dark",
+        "hard"
+      ],
+      "energy": 0.75,
+      "valence": 0.4,
+      "tempo_hint": null,
+      "families": [
+        "city",
+        "synthwave",
+        "tunnel",
+        "sweeping beams"
+      ],
+      "avoid": [
+        "pastel/soft",
+        "aurora",
+        "dot-sheet",
+        "fast confetti"
+      ],
+      "palette": {
+        "hues": [
+          275,
+          350
+        ],
+        "sat_cap": 0.55,
+        "dark": true
+      },
+      "motion": "heavy",
+      "kick": "punch",
+      "notes": "trap swagger, steel-violet and crimson, hard beams"
+    },
+    "bigxthaplug - all the way": {
+      "source": "model",
+      "mood": [
+        "wistful",
+        "warm",
+        "earnest"
+      ],
+      "energy": 0.6,
+      "valence": 0.35,
+      "tempo_hint": null,
+      "families": [
+        "golden hour",
+        "slow wide beams",
+        "low beams",
+        "city"
+      ],
+      "avoid": [
+        "fast confetti",
+        "lattice",
+        "hyperspace",
+        "ring shockwaves"
+      ],
+      "palette": {
+        "hues": [
+          35,
+          8
+        ],
+        "sat_cap": 0.55
+      },
+      "motion": "flowing",
+      "kick": "bloom",
+      "notes": "country-trap crossover, dusk amber over a slow low rig"
+    },
+    "bon jovi - livin on a prayer": {
+      "source": "model",
+      "mood": [
+        "anthemic",
+        "triumphant",
+        "defiant"
+      ],
+      "energy": 0.9,
+      "valence": 0.75,
+      "tempo_hint": 123,
+      "families": [
+        "sweeping beams",
+        "city",
+        "golden hour",
+        "pillars"
+      ],
+      "avoid": [
+        "rain",
+        "dot-sheet",
+        "pastel/soft"
+      ],
+      "palette": {
+        "hues": [
+          35,
+          355
+        ],
+        "sat_cap": 0.6
+      },
+      "motion": "sharp",
+      "kick": "punch",
+      "notes": "stadium rock, amber beams sweeping on every beat, big chorus"
+    },
+    "acdc - highway to hell": {
+      "source": "model",
+      "mood": [
+        "raw",
+        "driving",
+        "cocky"
+      ],
+      "energy": 0.9,
+      "valence": 0.55,
+      "tempo_hint": 116,
+      "families": [
+        "sweeping beams",
+        "city",
+        "pillars",
+        "tunnel"
+      ],
+      "avoid": [
+        "rain",
+        "dot-sheet",
+        "pastel/soft",
+        "aurora"
+      ],
+      "palette": {
+        "hues": [
+          0,
+          30
+        ],
+        "sat_cap": 0.6,
+        "dark": true
+      },
+      "motion": "sharp",
+      "kick": "punch",
+      "notes": "riff-driven hard rock, red and amber, steady stomp"
+    },
+    "3 doors down - kryptonite": {
+      "source": "model",
+      "mood": [
+        "brooding",
+        "vulnerable",
+        "anthemic"
+      ],
+      "energy": 0.7,
+      "valence": 0.3,
+      "tempo_hint": null,
+      "families": [
+        "city",
+        "galaxy",
+        "sweeping beams",
+        "slow wide beams"
+      ],
+      "avoid": [
+        "fast confetti",
+        "dot-sheet",
+        "pastel/soft"
+      ],
+      "palette": {
+        "hues": [
+          215,
+          265
+        ],
+        "sat_cap": 0.55,
+        "dark": true
+      },
+      "motion": "heavy",
+      "kick": "bloom",
+      "notes": "post-grunge night drive, cool blue-violet, chorus opens wide"
+    }
+  }
+}

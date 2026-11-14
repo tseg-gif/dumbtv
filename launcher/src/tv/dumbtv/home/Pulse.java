@@ -1934,7 +1934,7 @@ final class Pulse extends View implements Visualizer.OnDataCaptureListener {
     /** The singer: a silhouette with a neon rim, radial spectrum bars behind it. Without a baked sheet only the bars show. */
     private void drawBlob(Canvas c, float w, float h, int l) {
         float cx = w / 2f, hy = h * 0.5f, headH = h * 0.36f;
-        singer.prepare(song.hashCode() * 31 + l);
+        if (showPeople) singer.prepare(song.hashCode() * 31 + l);
         float r0 = h * 0.27f;
         int n = BARS * 2;
         float step = TWO_PI / n;
@@ -1951,10 +1951,54 @@ final class Pulse extends View implements Visualizer.OnDataCaptureListener {
         }
         paint.setStrokeCap(Paint.Cap.BUTT);
         paint.setStyle(Paint.Style.FILL);
-        if (singer.ready()) {
-            int rim = tone(0.55f, 1f, 255f, lh[l]) | 0xFF000000;
-            singer.draw(c, cx, hy, headH, 0.016f, mid, kick, snare, rim, 255);
+        if (showPeople) { // "Show people": the singer silhouette, only when asked for
+            if (singer.ready()) {
+                int rim = tone(0.55f, 1f, 255f, lh[l]) | 0xFF000000;
+                singer.draw(c, cx, hy, headH, 0.016f, mid, kick, snare, rim, 255);
+            }
+        } else {
+            drawCore(c, cx, hy, r0 * 0.92f, l);
         }
+    }
+
+    private final CoreGeom core = new CoreGeom();
+    private volatile boolean showPeople;
+
+    /** show_people=on|off (default off): human figures in the visuals. Off: the geometric centrepiece instead. */
+    void setShowPeople(boolean on) {
+        showPeople = on;
+    }
+
+    /** The non-human centrepiece: rings, ticks and polygons that follow the kick, the vocal band and the bass. */
+    private void drawCore(Canvas c, float cx, float cy, float r, int l) {
+        float t = (android.os.SystemClock.uptimeMillis() % 3600000L) / 1000f;
+        java.util.ArrayList<RigGeom.Prim> prims = core.frame(cx, cy, r, t, Math.min(1f, kick), Math.min(1f, mid * 1.4f), Math.min(1f, bass * 1.4f));
+        for (int i = 0; i < prims.size(); i++) {
+            RigGeom.Prim p = prims.get(i);
+            int a = Math.round(255f * p.a);
+            int col = p.col == RigGeom.COL_WHITE ? ((a << 24) | 0xEEF2FF) : (tone(p.col == RigGeom.COL_ALT ? 0.62f : 0.18f, 1f, a, lh[l]));
+            paint.setColor(col);
+            switch (p.kind) {
+                case RigGeom.LINE:
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(Math.max(1.5f, p.w));
+                    c.drawLine(p.x1, p.y1, p.x2, p.y2, paint);
+                    break;
+                case RigGeom.ELLIPSE:
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(Math.max(1.5f, p.w));
+                    c.drawCircle(p.x1, p.y1, p.x2, paint);
+                    break;
+                default:
+                    paint.setStyle(Paint.Style.FILL);
+                    path.reset();
+                    path.moveTo(p.poly[0], p.poly[1]);
+                    for (int k = 1; k < p.n; k++) path.lineTo(p.poly[2 * k], p.poly[2 * k + 1]);
+                    path.close();
+                    c.drawPath(path, paint);
+            }
+        }
+        paint.setStyle(Paint.Style.FILL);
     }
 
     /** Retro sunset: a striped sun, the spectrum as a skyline, and a grid rushing toward you. */

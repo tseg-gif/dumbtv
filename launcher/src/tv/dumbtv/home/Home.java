@@ -479,6 +479,7 @@ public final class Home extends Activity {
     private Stage stage;
     private Milk milk;
     private Glow glow;
+    private Rig rig; // the concert rig and its director, over the Glow backdrop (react_director=on|off, react_camera=on|off)
     private volatile String glowGenre = "unknown";
     private boolean genrePoll, glowCanvas;
     private android.widget.TextView glowLabel;
@@ -615,15 +616,15 @@ public final class Home extends Activity {
             glow.setGallery(gs, gv);
             glow.setDancerForce("on".equals(cfg.get("react_dancer", "off")));
             glow.setDancerSongs(cfg.get("react_dancer_songs", "Michael Jackson|Beat It"));
+            // one sync setting: react_sync_ms. The old react_delay_ms is only read to fold into it (see syncMs).
             glow.setBaseSync(syncMs());
-            int delayMs = 0;
-            try {
-                delayMs = Integer.parseInt(cfg.get("react_delay_ms", "0"));
-            } catch (NumberFormatException e) {
-                delayMs = 0;
-            }
-            glow.setDelay(delayMs);
+            glow.setDelay(0);
+            glow.setComfort(cfg.get("react_comfort", "high"));
+            glow.setColorMode(cfg.get(Config.REACT_COLOR));
+            glow.setShowPeople("on".equals(cfg.get(Config.SHOW_PEOPLE))); // the dancer needs this on, even for Beat It
             glow.setCalibrate("on".equals(cfg.get("react_calibrate", "off")));
+            android.util.Log.i("dumbtv", "effective react_comfort=" + cfg.get("react_comfort", "high")
+                + " react_color=" + cfg.get(Config.REACT_COLOR) + " react_sync_ms=" + glow.effectiveSync());
             glow.setGenreSource(new Glow.GenreSource() {
                 @Override
                 public String genre() {
@@ -641,6 +642,7 @@ public final class Home extends Activity {
                         }
                         stage.primeGenre();
                         glowGenre = stage.genre();
+                        if (rig != null) rig.setGenre(glowGenre);
                         root.postDelayed(this, 1000);
                     }
                 }, 1000);
@@ -649,8 +651,30 @@ public final class Home extends Activity {
             glow.view().setVisibility(on ? View.VISIBLE : View.GONE);
             glow.setRunning(on);
         }
+        syncRig();
         pulse.setVisibility((want && !glowCanvas) || milk != null ? View.INVISIBLE : View.VISIBLE);
         stage.setVisibility(want ? View.INVISIBLE : View.VISIBLE);
+    }
+
+    /** The concert rig lives exactly as long as the Glow engine and react_director=on; a failure to build it leaves Glow alone. */
+    private void syncRig() {
+        boolean wantRig = glow != null && "on".equals(cfg.get("react_director", "on"));
+        if (wantRig && rig == null) {
+            try {
+                rig = new Rig(this, pulse, glow);
+                root.addView(rig, root.indexOfChild(glow.view()) + 1, new FrameLayout.LayoutParams(MATCH, MATCH));
+                rig.newSong(curArtist, curTitle, glowGenre);
+            } catch (RuntimeException e) {
+                android.util.Log.w("dumbrig", "rig unavailable", e);
+                rig = null;
+            }
+        }
+        if (rig != null && wantRig) rig.setCameraEnabled("on".equals(cfg.get("react_camera", "on")));
+        if (!wantRig && rig != null) {
+            rig.stop();
+            root.removeView(rig);
+            rig = null;
+        }
     }
 
     /** Fades the song fact in, holds it 8 s and fades it out. */
@@ -665,13 +689,29 @@ public final class Home extends Activity {
         }).start();
     }
 
-    /** react_sync_ms in home.conf, -300..300: visuals later (+) for a soundbar or Bluetooth speaker. */
+    /**
+     * react_sync_ms in home.conf, -300..300: the one sync setting. Visuals later (+) for a soundbar or Bluetooth
+     * speaker; the calibration screen writes it too. A leftover react_delay_ms from older builds is added once
+     * and then cleared, so the two can never disagree.
+     */
     private int syncMs() {
+        int sync = 0, legacy = 0;
         try {
-            return Math.max(-300, Math.min(300, Integer.parseInt(cfg.get("react_sync_ms", "0"))));
+            sync = Integer.parseInt(cfg.get("react_sync_ms", "0"));
         } catch (NumberFormatException e) {
-            return 0;
+            sync = 0;
         }
+        try {
+            legacy = Integer.parseInt(cfg.get("react_delay_ms", "0"));
+        } catch (NumberFormatException e) {
+            legacy = 0;
+        }
+        int total = Math.max(-300, Math.min(300, sync + legacy));
+        if (legacy != 0) {
+            cfg.set("react_sync_ms", String.valueOf(total));
+            cfg.set("react_delay_ms", "0");
+        }
+        return total;
     }
 
     /** Every 12 s, while the Canvas engine is what shows, empties the GPU cache its paths fill. */
@@ -699,6 +739,7 @@ public final class Home extends Activity {
         stage.setSyncMs(syncMs());
         stage.setDebug("on".equals(cfg.get("react_debug", "off")));
         pulse.setColorMode(cfg.get(Config.REACT_COLOR));
+        pulse.setShowPeople("on".equals(cfg.get(Config.SHOW_PEOPLE))); // off by default: no human shapes in the visuals
         pulse.setOriginEnabled("on".equals(cfg.get(Config.REACT_ORIGIN)));
         pulse.setDebug("on".equals(cfg.get("react_debug", "off")));
         ui.removeCallbacks(gpuTrim);
@@ -720,6 +761,7 @@ public final class Home extends Activity {
         public void run() {
             if (debugView == null) return;
             String s = glow == null ? "no glow engine" : glow.debugLine();
+            if (rig != null) s += "\n" + rig.debugText(); // look signature, next 3 looks, section, bpm/confidence, APL, fps
             debugView.setText("DEBUG  " + s);
             ui.postDelayed(this, 500);
         }
@@ -830,11 +872,12 @@ public final class Home extends Activity {
             if (code == KeyEvent.KEYCODE_DPAD_RIGHT || code == KeyEvent.KEYCODE_DPAD_LEFT) {
                 int dir = code == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1;
                 if (glow != null && glow.calibrating()) { // calibration: left/right nudge the visual delay, 10 ms a press
-                    int d = Math.max(-300, Math.min(300, glow.delay() + dir * 10));
-                    glow.setDelay(d);
-                    cfg.set("react_delay_ms", String.valueOf(d));
+                    int d = Math.max(-300, Math.min(300, glow.effectiveSync() + dir * 10));
+                    glow.setBaseSync(d);
+                    glow.setDelay(0);
+                    cfg.set("react_sync_ms", String.valueOf(d));
                     Toast.makeText(this, "Visual delay " + d + " ms", Toast.LENGTH_SHORT).show();
-                    android.util.Log.i("dumbsync", "calibrate delay=" + d + "ms");
+                    android.util.Log.i("dumbsync", "calibrate react_sync_ms=" + d + "ms");
                     return true;
                 }
                 if (milk != null) milk.skip(dir);
@@ -859,6 +902,12 @@ public final class Home extends Activity {
         boolean wasHidden = musicHidden;
         revealApps();
         return wasHidden;
+    }
+
+    private static String tagList(Origin.Info info) {
+        StringBuilder sb = new StringBuilder();
+        if (info != null) for (String t : info.tags) sb.append(sb.length() == 0 ? "" : ",").append(t);
+        return sb.toString();
     }
 
     /** Reads song, artist and cover from the active media session; needs notification access. */
@@ -920,6 +969,7 @@ public final class Home extends Activity {
             curTitle = title;
             if (milk != null) milk.setSong(artist, title);
             if (glow != null) glow.setSong(artist, title);
+            if (rig != null) rig.newSong(artist, title, glowGenre);
             stage.setSong(artist, title);
             final String forArtist = artist;
             if (!"on".equals(cfg.get(Config.REACT_ORIGIN))) stage.setOrigin(null, "");
@@ -965,6 +1015,7 @@ public final class Home extends Activity {
                     curInfo = known.resolved ? known : null;
                     if (milk != null) milk.setIdentity(curInfo);
                     if (known.resolved) stage.setOrigin(known, Origin.place(this, forArtist));
+                    if (known.resolved && rig != null) rig.setTags(tagList(known));
                     if (!known.resolved) {
                         final String forSong = song;
                         Origin.fetch(this, artist, title, new Origin.Callback() {
@@ -975,6 +1026,7 @@ public final class Home extends Activity {
                                     curInfo = info;
                                     if (milk != null) milk.setIdentity(info);
                                     stage.setOrigin(info, Origin.place(Home.this, forArtist));
+                                    if (rig != null) rig.setTags(tagList(info));
                                 }
                             }
                         });

@@ -238,7 +238,6 @@ final class Scenes {
             case 24: lasers(c); break;
             case 25: discoBall(c); break;
             case 26: confetti(c); break;
-            case 27: crowd(c); break;
             case 32: rainStreet(c); break;
             case 33: umbrella(c); break;
             case 34: fog(c); break;
@@ -790,36 +789,6 @@ final class Scenes {
             float e = Math.abs((float) Math.cos(rot[i]));
             fill(col[i], 0.85f);
             c.drawRect(x[i] - sz[i], y[i] - sz[i] * e, x[i] + sz[i], y[i] + sz[i] * e, p);
-        }
-    }
-
-    private void crowd(Canvas c) {
-        sky(c, pc[6], pc[1], 0, h, 0.96f);
-        for (int i = 0; i < 4; i++) {
-            float bx = w * (0.15f + 0.23f * i), a = 0.25f + 0.3f * ener;
-            path.reset();
-            path.moveTo(bx, 0);
-            path.lineTo(bx - w * 0.12f, h * 0.8f);
-            path.lineTo(bx + w * 0.12f, h * 0.8f);
-            path.close();
-            fill(i % 2 == 0 ? pc[3] : pc[4], 0.1f + 0.08f * a);
-            c.drawPath(path, p);
-        }
-        fill(pc[6], 1f);
-        for (int row = 0; row < 3; row++) {
-            for (int i = 0; i < 14; i++) {
-                float px = (i + 0.5f + row * 0.4f) * w / 13.5f, py = h * (0.82f + row * 0.07f);
-                float bob = (float) Math.sin(age * 4f * speed + i * 1.3f + row) * h * 0.01f * (0.5f + beat);
-                py += bob;
-                c.drawCircle(px, py - h * 0.1f, h * (0.026f + row * 0.004f), p);
-                c.drawRoundRect(px - h * 0.04f, py - h * 0.075f, px + h * 0.04f, h, h * 0.02f, h * 0.02f, p);
-                if (((i + row) % 3) != 0) {
-                    float up = h * (0.1f + 0.05f * (float) Math.sin(age * 3f + i));
-                    line(c, px - h * 0.03f, py - h * 0.06f, px - h * 0.06f, py - h * 0.06f - up, pc[6], 1f, h * 0.014f);
-                    line(c, px + h * 0.03f, py - h * 0.06f, px + h * 0.06f, py - h * 0.06f - up * 0.9f, pc[6], 1f, h * 0.014f);
-                    fill(pc[6], 1f);
-                }
-            }
         }
     }
 

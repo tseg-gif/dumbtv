@@ -36,7 +36,7 @@ final class Glow implements GLSurfaceView.Renderer {
     static final String[] NAMES = {"dunes", "tunnel", "planet", "rain", "galaxy", "beam"};
     private static final int MAXN = 16000;
     private static final float TAN_H = 0.62f;
-    private static final float MIN_DWELL = 20f, MAX_DWELL = 45f, FADE = 1.5f;
+    private static final float MIN_DWELL = 25f, MAX_DWELL = 45f, FADE = 1.5f; // a scene lasts 25-45 s and changes on a bar line
     private static final int[] SCENE_HARM = {0, 1, 0, 1, 2, 1}; // dunes, tunnel, planet, rain, galaxy, beam
 
     private static final String VS =
@@ -462,6 +462,50 @@ final class Glow implements GLSurfaceView.Renderer {
         return -1;
     }
 
+    private static SceneMemory sceneMemory;
+
+    /** What has been shown, across songs and restarts (SharedPreferences "dumbvariety"). */
+    static synchronized SceneMemory memory(Context c) {
+        if (sceneMemory == null) {
+            final android.content.SharedPreferences sp = c.getApplicationContext().getSharedPreferences("dumbvariety", Context.MODE_PRIVATE);
+            sceneMemory = new SceneMemory(new SceneMemory.Store() {
+                @Override
+                public String load(String key) {
+                    return sp.getString(key, null);
+                }
+
+                @Override
+                public void save(String key, String value) {
+                    sp.edit().putString(key, value).apply();
+                }
+            });
+        }
+        return sceneMemory;
+    }
+
+    /** family of a scene by name (the rig's backdrops are scene names), or -1 */
+    static int familyOf(String name) {
+        int id = idOf(name);
+        return id < 0 ? -1 : family(id);
+    }
+
+    private static int[] variantTable;
+
+    /**
+     * How many presets of a scene look different. A scene whose shader never reads the preset value (uVr) only has
+     * colour changes, which come from the palette, so it counts as one look; the others change layout, motion or count.
+     */
+    static int variantsOf(int scene) {
+        if (scene < NCORE || scene >= NCORE + NNEW) return 1;
+        if (variantTable == null) {
+            int[] v = new int[NNEW];
+            java.util.regex.Pattern pat = java.util.regex.Pattern.compile("\\bvr\\b");
+            for (int i = 0; i < NNEW; i++) v[i] = pat.matcher(GlowScenes.BODY[i]).find() ? 4 : 1;
+            variantTable = v;
+        }
+        return variantTable[scene - NCORE];
+    }
+
     private static int family(int id) {
         return id == CINEMA ? 7 : id >= CANVAS0 + 11 ? 6 : id >= CANVAS0 ? 5 : FAMILY[id];
     }
@@ -485,6 +529,9 @@ final class Glow implements GLSurfaceView.Renderer {
     private volatile boolean coverNew;
     private volatile GenreSource gsrc;
     private float hueTarget, hueShow = 200f, palSat = 0.48f, palVal = 0.68f;
+    private float[] palOver;                    // the song entry's hues (degrees); null = cover art / genre palette
+    private float satCapNow = 0.58f, motionK = 1f;
+    private boolean palDark;
     private int harmSeed;
     private String genre = "unknown", palSrc = "seed", lastPlanKey = "";
     private boolean hueCommitted;
@@ -535,7 +582,12 @@ final class Glow implements GLSurfaceView.Renderer {
     private static final int SW = 1024, SH = 512;
     private static final String DTAG = "dumbdancer";
     private int fbo, sceneTex, avgFbo, avgTex, quadVbo, postProg, avgProg, danProg, oesTex;
-    private float gain = 1f, avgLum, avgT;
+    private float gain = 1f, avgLum, avgT, aplTarget;
+    // react_comfort: 0 high (default), 1 normal, 2 vivid. Sets the picture-level target scale and the largest boost.
+    private volatile int comfortLevel;
+    private volatile boolean colorVivid;
+    private static final float[] APL_SCALE = {0.75f, 1f, 1f};
+    private static final float[] GAIN_MAX = {2.5f, 3.5f, 5f};
     private final ByteBuffer px4 = ByteBuffer.allocateDirect(16 * 8 * 4).order(ByteOrder.nativeOrder());
     private int surfW = 960, surfH = 540;
     // the dancer: one MediaPlayer into one external texture, drawn up to five times
@@ -738,6 +790,11 @@ final class Glow implements GLSurfaceView.Renderer {
 
     int delay() {
         return userDelay;
+    }
+
+    /** The one value that matters: base sync plus the calibration nudge, in ms the picture is held back. */
+    int effectiveSync() {
+        return baseSync + userDelay;
     }
 
     void setCalibrate(boolean on) {
@@ -1081,8 +1138,72 @@ final class Glow implements GLSurfaceView.Renderer {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo);
             GLES20.glViewport(0, 0, SW, SH);
         }
-        float target = Math.min(1f, 0.33f / Math.max(avgLum, 0.001f));
-        gain += (target - gain) * Math.min(1f, dt * (target < gain ? 4f : 0.6f));
+        // Auto-exposure: aim the average picture level at a band set by the music's energy (calm 0.08-0.15,
+        // mid 0.15-0.25, high 0.22-0.35), scaled by react_comfort. The post shader's knee still holds the peak at 0.8.
+        float e = Math.max(0f, Math.min(1f, (ener - 0.10f) / 0.25f));
+        float apl = e < 0.5f ? 0.10f + 0.10f * (e / 0.5f) : 0.20f + 0.09f * ((e - 0.5f) / 0.5f);
+        aplTarget = apl * APL_SCALE[comfortLevel];
+        float target = Math.max(0.25f, Math.min(GAIN_MAX[comfortLevel], aplTarget / Math.max(avgLum, 0.004f)));
+        // down fast, up slowly: no visible steps, well under two brightness jumps a second
+        gain += (target - gain) * Math.min(1f, dt * (target < gain ? 4f : 0.5f));
+    }
+
+    /** react_comfort=high|normal|vivid: the picture-level target and the largest boost the auto-exposure may apply. */
+    void setComfort(String c) {
+        comfortLevel = "vivid".equals(c) ? 2 : "normal".equals(c) ? 1 : 0;
+    }
+
+    /** react_color=soft|vivid|accent: vivid lifts the palette's saturation and value a little. */
+    void setColorMode(String m) {
+        colorVivid = "vivid".equals(m);
+    }
+
+    /** Glow's own surge/sag detector: 0 groove, 2 surge, 3 sag. */
+    int sectionNow() {
+        return section;
+    }
+
+    float hueNow() {
+        return hueShow;
+    }
+
+    /** The song entry's second palette hue for the rig's alt colour, or hueNow()+60 when there is no entry. */
+    float altHue() {
+        return palOver != null && palOver.length > 1 ? palOver[1] : (hueShow + 60f) % 360f;
+    }
+
+    /**
+     * A song entry's palette and motion replace the cover-art colours: hues (2-3, degrees), saturation cap, dark base, and the
+     * scene clock's speed. Null hues clear it. Call before setSong for a new song, or again (with rehue) once a derived entry arrives.
+     */
+    void setLook(float[] hues, float satCap, boolean dark, float speed) {
+        palOver = hues == null || hues.length == 0 ? null : hues.clone();
+        satCapNow = palOver == null ? 0.58f : Math.max(0.2f, Math.min(0.58f, satCap));
+        palDark = palOver != null && dark;
+        motionK = palOver == null && speed == 1f ? 1f : Math.max(0.3f, Math.min(1.5f, speed));
+        if (hueCommitted) {
+            moodColors();
+            if (palOver != null) {
+                hueTarget = palOver[0];
+                hueHist[0] = palOver[0];
+            }
+        }
+    }
+
+    /** The time the picture is showing: now minus the held-back sync, the same clock the beat events use. */
+    long syncedNowMs() {
+        return SystemClock.uptimeMillis() - (baseSync + userDelay - RENDER_LAT);
+    }
+
+    /** one line for the debug panel: picture level (after the auto-exposure gain), fps and the effective settings */
+    String rigStats() {
+        return "apl=" + Math.round(avgLum * gain * 1000) / 10f + "% fps=" + Math.round(1f / Math.max(0.004f, frameAvg)) + " " + exposureInfo()
+            + " sync=" + effectiveSync() + "ms";
+    }
+
+    String exposureInfo() {
+        return "comfort=" + new String[] {"high", "normal", "vivid"}[comfortLevel] + " color=" + (colorVivid ? "vivid" : "other")
+            + " aplTarget=" + Math.round(aplTarget * 100) + "%";
     }
 
     /** Calibration: a big disc that pulses on every beat the picture fires, to line up with the sound. */
@@ -1281,14 +1402,22 @@ final class Glow implements GLSurfaceView.Renderer {
 
     // ---- when the dancer appears: only on the listed songs, on choruses and other loud sections
 
+    /** show_people=on|off (default off): the dancer is a human figure, so it never starts, even on its song, unless this is on. */
+    private volatile boolean showPeople;
+
+    void setShowPeople(boolean on) {
+        showPeople = on;
+    }
+
     private void dancerStep(float dt, float fps) {
+        if (!showPeople && dState != 0 && dState != 3) dState = 3; // switched off mid-dance: let it fade out
         songT += dt;
         boolean loud = (ener > 0.20f && ener > slowE * 1.10f) || ener > 0.34f;
         if (loud && section != 3) hiE += dt;
         else hiE = Math.max(0f, hiE - dt * 2f);
         switch (dState) {
             case 0:
-                if (dReady && (dSong || dForce) && songT >= 20f && time >= dRestUntil && time - dLastEnd >= 12f && hiE >= 1.5f) {
+                if (showPeople && dReady && (dSong || dForce) && songT >= 20f && time >= dRestUntil && time - dLastEnd >= 12f && hiE >= 1.5f) {
                     dState = 1;
                     dWait = 0f;
                 }
@@ -1449,6 +1578,10 @@ final class Glow implements GLSurfaceView.Renderer {
     private float desiredHue(Random r) {
         float want = Float.NaN;
         String src = "seed";
+        if (palOver != null) {
+            palSrc = "entry";
+            return palOver[0];
+        }
         int[] cv = cover;
         if (cv != null) {
             float best = -1f;
@@ -1484,6 +1617,7 @@ final class Glow implements GLSurfaceView.Renderer {
 
     /** The nearest hue to want that is at least 60 degrees from the last song and 20 from the nine before it. */
     private float pickHue(float want, boolean replaceLast) {
+        if (palOver != null) return want;
         int start = replaceLast ? 1 : 0;
         for (int pass = 0; pass < 3; pass++) {
             float others = pass == 0 ? 20f : pass == 1 ? 10f : 0f;
@@ -1516,6 +1650,14 @@ final class Glow implements GLSurfaceView.Renderer {
             case "hiphop": palSat = 0.74f; palVal = 0.82f; break;
             default: palSat = 0.70f; palVal = 0.80f; break;
         }
+        if (colorVivid) {
+            palSat = Math.min(0.85f, palSat + 0.10f);
+            palVal = Math.min(0.90f, palVal + 0.06f);
+        }
+        if (palOver != null) {
+            palSat = Math.min(palSat, satCapNow);
+            if (palDark) palVal = Math.min(palVal, 0.58f); // near-black base
+        }
     }
 
     /** The cover art arrived (or the genre did) after the plan: pick the hue again, and the palette glides there. */
@@ -1530,8 +1672,8 @@ final class Glow implements GLSurfaceView.Renderer {
 
     private void put(float[] o, int at, float h, float sat, float val) {
         hsvTmp[0] = (h % 360f + 360f) % 360f;
-        hsvTmp[1] = Math.min(0.58f, sat);
-        hsvTmp[2] = Math.min(0.76f, val);
+        hsvTmp[1] = Math.min(satCapNow, sat);
+        hsvTmp[2] = Math.min(palDark ? 0.62f : 0.76f, val);
         int col = Color.HSVToColor(hsvTmp);
         o[at] = Color.red(col) / 255f;
         o[at + 1] = Color.green(col) / 255f;
@@ -1547,6 +1689,10 @@ final class Glow implements GLSurfaceView.Renderer {
         float h = hueShow;
         float h1 = hm == 0 ? h + 28f : hm == 1 ? h + 165f : h + 120f;
         float h2 = hm == 0 ? h - 22f : hm == 1 ? h + 30f : h + 240f;
+        if (palOver != null) { // the entry's own hues, not harmonies of one
+            h1 = palOver[1 % palOver.length];
+            h2 = palOver.length > 2 ? palOver[2] : palOver[0] + 12f;
+        }
         put(o, 0, h, palSat, palVal);
         put(o, 3, h1, palSat, palVal - 0.02f);
         put(o, 6, h2, palSat * 0.78f, palVal + 0.08f);
@@ -1564,6 +1710,8 @@ final class Glow implements GLSurfaceView.Renderer {
             + " beatConf=" + Math.round(t.conf() * 100) + "% bpm=" + Math.round(t.bpm())
             + " bar=" + t.bars(SystemClock.uptimeMillis()) + " since=" + Math.round(since) + "s"
             + (cur == CINEMA ? "\n" + cinema.debug(since, cinemaTarget) : "")
+            + "\nvariety: scene=" + sceneName(Math.max(0, cur)) + ":" + curVar + "/" + variantsOf(Math.max(0, cur)) + " family=" + family(Math.max(0, cur))
+            + " " + memory(ctx).stats()
             + "\nlights=" + Lights.get(view.getContext()).writeRate() + " writes/s";
     }
 
@@ -1584,7 +1732,7 @@ final class Glow implements GLSurfaceView.Renderer {
         // quieter passages run the scenes slower: loudness against a slowly falling ceiling (Viz Lab: motion did not follow the music's dynamics)
         peakE = Math.max(peakE * (float) Math.exp(-dt / 60f), fastE);
         loudK = Math.max(0.35f, Math.min(1f, fastE / Math.max(0.15f, peakE)));
-        time += dt * (0.4f + 0.6f * loudK);
+        time += dt * (0.4f + 0.6f * loudK) * motionK;
         frameAvg += (dt - frameAvg) * 0.05f;
         float fps = 1f / Math.max(0.004f, frameAvg);
 
@@ -1732,7 +1880,7 @@ final class Glow implements GLSurfaceView.Renderer {
             beginScene("skip");
         } else if (pinId >= 0) {
             // Viz Lab holds this scene
-        } else if (forced == -2 ? since >= dwellTarget : (since >= (cur == CINEMA ? cinemaTarget : MIN_DWELL) && (edge || since >= (cur == CINEMA ? cinemaTarget + 8f : MAX_DWELL)))) {
+        } else if (forced == -2 ? since >= dwellTarget : (since >= (cur == CINEMA ? cinemaTarget : MIN_DWELL) && (edge || since >= (cur == CINEMA ? Math.min(45f, cinemaTarget + 8f) : (ener > 0.30f ? 30f : MAX_DWELL))))) {
             beginScene(changed ? "section" : "dwell");
         }
         kickHit = false;
@@ -1741,7 +1889,8 @@ final class Glow implements GLSurfaceView.Renderer {
         if (nowMs - lastLogMs > 10000) {
             lastLogMs = nowMs;
             Log.i(TAG, "status scene=" + sceneName(Math.max(0, cur)) + " hue=" + Math.round(hueShow) + " points=" + count
-                + " section=" + section + " fps=" + Math.round(fps) + " avg=" + Math.round(avgLum * 1000) / 10f + "% gain=" + Math.round(gain * 100) + "%");
+                + " section=" + section + " fps=" + Math.round(fps) + " avg=" + Math.round(avgLum * 1000) / 10f + "% gain=" + Math.round(gain * 100) + "%"
+                + " " + exposureInfo() + " syncEff=" + effectiveSync() + "ms");
         }
     }
 
@@ -2028,24 +2177,31 @@ final class Glow implements GLSurfaceView.Renderer {
         }
         boolean[] inG = new boolean[128], taken = new boolean[128], recent = new boolean[128];
         if (gl != null) for (int id : gl) if (id >= 0) inG[id] = true;
-        for (int i = 0; i < recentN; i++) recent[recentIds[i]] = true;
+        // hard rules from the persistent memory: not the last scene, not any of the last 6, not the same scene+preset within
+        // 15 minutes, and not one of this song's last 8
+        SceneMemory mem = memory(ctx);
+        long wall = System.currentTimeMillis();
+        for (int k = 0; k < ALL.length; k++) {
+            int sid = ALL[k];
+            recent[sid] = mem.blocked(sid, variantsOf(sid), wall, false) || mem.songRecent(sid, songKey);
+        }
         int maxCore = Math.max(1, (int) (n * 0.4f));
         int famCap = (n + 2) / 3;
         int core = 0, pn = 0;
         int[] famN = new int[8], pick = new int[12];
         float[] w = new float[ALL.length];
         for (int step = 0; step < n; step++) {
-            boolean surprise = gl != null && step < 2; // two picks from outside the genre's list
+            boolean surprise = false; // every scene is in the pool for every genre; the genre's own list only weighs 2x
             for (int pass = 0; pass < 2; pass++) {
                 float tot = 0f;
                 for (int k = 0; k < ALL.length; k++) {
                     int id = ALL[k];
                     w[k] = 0f;
                     if (id == CINEMA) continue; // Cinema is added below, by its own share
-                    if (taken[id] || (pass == 0 && recent[id])) continue;
+                    if (taken[id] || (pass == 0 && recent[id]) || (pass == 1 && mem.lastId() == id)) continue;
                     if (id < NCORE && core >= maxCore) continue;
                     if (famN[family(id)] >= famCap) continue;
-                    float base = gl == null ? 1f : surprise ? (inG[id] ? 0f : 1f) : (inG[id] ? 4f : 1f);
+                    float base = gl == null ? 1f : surprise ? (inG[id] ? 0f : 1f) : (inG[id] ? 2f : 1f);
                     if (id >= CANVAS0) base *= 0.7f;
                     if (id >= CANVAS0 + 11) base *= "piano".equals(genre) ? 3f : 0.25f; // note-world: 3x for piano songs, rare otherwise
                     if (id >= NCORE + 18 && id < CANVAS0) base *= 3f; // the newest scenes come up more often
@@ -2082,7 +2238,7 @@ final class Glow implements GLSurfaceView.Renderer {
         }
         // order them so the same family never plays twice in a row
         boolean[] used = new boolean[12];
-        int lastFam = -1;
+        int lastFam = mem.lastFamily(); // the family rotates first: the new playlist does not start in the family just shown
         planLen = 0;
         for (int s2 = 0; s2 < pn; s2++) {
             int cnt = 0;
@@ -2106,7 +2262,7 @@ final class Glow implements GLSurfaceView.Renderer {
         }
         int hs = songKey.hashCode();
         for (int i = 0; i < planLen; i++) {
-            planVar[i] = ((hs ^ (plan[i] * 0x9E3779B1)) >>> 7) & 3;
+            planVar[i] = mem.pickVariant(plan[i], variantsOf(plan[i]), r, wall); // a preset not shown in the last 15 minutes
             planFg[i] = -1;
             if (plan[i] < CANVAS0 && r.nextFloat() < 0.30f) { // a second, lighter layer from another type
                 int tries = 0;
@@ -2151,6 +2307,23 @@ final class Glow implements GLSurfaceView.Renderer {
         return sb.append(']').toString();
     }
 
+    /** One line per scene change in scenes.log next to home.conf (adb can read it; the logcat ring buffer only holds minutes). */
+    private void sceneLog(String why, long wall, int prevSecs) {
+        try {
+            File[] dirs = ctx.getExternalMediaDirs();
+            if (dirs == null || dirs.length == 0 || dirs[0] == null) return;
+            File f = new File(dirs[0], "scenes.log");
+            if (f.length() > 200000) f.delete();
+            java.io.FileWriter w = new java.io.FileWriter(f, true);
+            w.write(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(new java.util.Date(wall))
+                + " song=\"" + songKey + "\" scene=" + sceneName(cur) + " id=" + cur + " preset=" + curVar + "/" + variantsOf(cur)
+                + " family=" + family(cur) + " palette=" + Math.round(hueTarget) + " why=" + why + " prevSecs=" + prevSecs + "\n");
+            w.close();
+        } catch (java.io.IOException | RuntimeException e) {
+            // the log is a convenience; never let it touch the show
+        }
+    }
+
     private void beginScene(String why) {
         if (cur >= 0 && sceneFpsN > 0) {
             Log.i("dumbvariety", "end scene=" + sceneName(cur) + ":" + curVar + " fps avg=" + Math.round(sceneFpsSum / sceneFpsN) + " min=" + Math.round(sceneFpsMin));
@@ -2175,8 +2348,11 @@ final class Glow implements GLSurfaceView.Renderer {
             dwellTarget = gallerySecs;
         } else {
             int i = planIdx++ % planLen;
+            // the hard rules again at play time: other scenes may have been shown since the playlist was built
+            long wallNow = System.currentTimeMillis();
+            for (int tries = 0; tries < planLen && memory(ctx).blocked(plan[i], variantsOf(plan[i]), wallNow, false); tries++) i = planIdx++ % planLen;
             cur = plan[i];
-            curVar = planVar[i];
+            curVar = memory(ctx).pickVariant(cur, variantsOf(cur), rnd, wallNow);
             curFg = planFg[i];
             curFgVar = (curVar + 1 + (int) (varB * 3f)) & 3;
             dwellTarget = 15f + rnd.nextFloat() * 15f;
@@ -2193,6 +2369,9 @@ final class Glow implements GLSurfaceView.Renderer {
         }
         lastUsed[cur] = ++serial;
         if (curFg >= 0) lastUsed[curFg] = serial;
+        long wallStamp = System.currentTimeMillis();
+        memory(ctx).record(cur, curVar, family(cur), songKey, wallStamp);
+        sceneLog(why, wallStamp, Math.round(since));
         for (int i = Math.min(recentN, 11); i > 0; i--) recentIds[i] = recentIds[i - 1];
         recentIds[0] = cur;
         recentN = Math.min(12, recentN + 1);
